@@ -1,5 +1,23 @@
 window.OCTO_GAMES = Object.freeze([
   {
+    "id": "8-ball-pool-online",
+    "title": "8 Ball Pool",
+    "description": "Play classic 8 Ball Pool in your browser from the Octo Industries game collection.",
+    "addedAt": "2026-10-13T00:00:00.000Z",
+    "version": "1.0.0",
+    "category": "Sports",
+    "tags": [
+      "billiards",
+      "pool",
+      "sports",
+      "arcade"
+    ],
+    "launch": "Octo-Industries/8-Ball-Pool-Online/index.html",
+    "thumbnail": "",
+    "screenshots": [],
+    "featured": false
+  },
+  {
     "id": "age-of-war",
     "addedAt": "2026-10-06T12:00:00.000Z",
     "title": "Age of War",
