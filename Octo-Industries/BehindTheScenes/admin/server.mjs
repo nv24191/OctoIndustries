@@ -98,6 +98,27 @@ function restoreCatalogAddedDates(state, catalog) {
   return changed;
 }
 
+function refreshCatalogAssetFields(state, catalog) {
+  const catalogById = new Map(catalog.map((game) => [game.id, game]));
+  const fields = ['launch', 'thumbnail', 'screenshots', 'sourceFile'];
+  let changed = false;
+  state.games = state.games.map((game) => {
+    const catalogGame = catalogById.get(game.id);
+    if (!catalogGame) return game;
+    const updates = {};
+    for (const field of fields) {
+      if (Object.prototype.hasOwnProperty.call(catalogGame, field)
+        && JSON.stringify(game[field]) !== JSON.stringify(catalogGame[field])) {
+        updates[field] = catalogGame[field];
+      }
+    }
+    if (!Object.keys(updates).length) return game;
+    changed = true;
+    return { ...game, ...updates };
+  });
+  return changed;
+}
+
 async function saveState() {
   if (remoteD1Configured) {
     const result = await d1Query(
@@ -258,6 +279,7 @@ async function loadState() {
         changed = true;
       }
       if (restoreCatalogAddedDates(state, catalog)) changed = true;
+      if (refreshCatalogAssetFields(state, catalog)) changed = true;
       if (ensureRoadmapState(state)) changed = true;
       const existingIds = new Set(state.games.map((game) => game.id));
       for (const game of catalog) {
@@ -293,6 +315,7 @@ async function loadState() {
       throw new Error('The saved admin state has an invalid format.');
     }
     restoreCatalogAddedDates(state, catalog);
+    refreshCatalogAssetFields(state, catalog);
     const existingIds = new Set(state.games.map((game) => game.id));
     for (const game of catalog) {
       if (!existingIds.has(game.id)) {

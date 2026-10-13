@@ -150,7 +150,7 @@ function testEnvironment(password) {
   };
 }
 
-test('public catalog backfills addedAt for existing D1 games without overwriting edits', async () => {
+test('public catalog refreshes stale asset refs and backfills addedAt without overwriting edits', async () => {
   const env = testEnvironment('backfill-test');
   const source = await readFile(catalogFile, 'utf8');
   const catalogMatch = /Object\.freeze\(([\s\S]*)\);\s*$/.exec(source);
@@ -158,6 +158,10 @@ test('public catalog backfills addedAt for existing D1 games without overwriting
   const catalogGames = JSON.parse(catalogMatch[1]);
   const existingGames = catalogGames.map(({ addedAt, ...game }, index) => ({
     ...game,
+    launch: game.launch.replace(/^\/+/, '').split(/[?#]/, 1)[0],
+    thumbnail: '',
+    screenshots: game.screenshots.map((path) => path.split(/[?#]/, 1)[0].replace(/^\/+/, '')),
+    sourceFile: undefined,
     title: index === 0 ? 'Owner-edited title' : game.title,
     status: 'published',
   }));
@@ -167,7 +171,12 @@ test('public catalog backfills addedAt for existing D1 games without overwriting
   assert.equal(response.status, 200);
   const publicGames = await response.json();
   for (const game of catalogGames) {
-    assert.equal(publicGames.find((entry) => entry.id === game.id)?.addedAt, game.addedAt);
+    const updated = publicGames.find((entry) => entry.id === game.id);
+    assert.equal(updated?.addedAt, game.addedAt);
+    assert.equal(updated?.launch, game.launch);
+    assert.equal(updated?.thumbnail, game.thumbnail);
+    assert.deepEqual(updated?.screenshots, game.screenshots);
+    assert.equal(updated?.sourceFile, game.sourceFile);
   }
   assert.equal(publicGames[0].title, 'Owner-edited title');
   const savedState = JSON.parse(env.ADMIN_DB.state);

@@ -77,7 +77,17 @@ test('admin service protects and manages the canonical library', async (t) => {
   const storedCatalog = JSON.parse(catalogMatch[1]);
   await mkdir(dataDirectory, { recursive: true });
   await writeFile(resolve(dataDirectory, 'admin-state.json'), JSON.stringify({
-    games: storedCatalog.map(({ addedAt, ...game }) => ({ ...game, status: 'published' })),
+    games: storedCatalog.map(({ addedAt, ...game }) => ({
+      ...game,
+      launch: game.launch.replace(/^\/+/, '').split(/[?#]/, 1)[0],
+      thumbnail: ['8-ball-pool-online', 'baggio-magical-kicks'].includes(game.id)
+        ? ''
+        : game.thumbnail.split(/[?#]/, 1)[0].replace(/^\/+/, ''),
+      screenshots: game.screenshots.map((path) => path.split(/[?#]/, 1)[0].replace(/^\/+/, '')),
+      sourceFile: undefined,
+      title: game.id === 'baggio-magical-kicks' ? 'Owner-edited Baggio title' : game.title,
+      status: 'published',
+    })),
     jobs: [],
     activity: [],
   }));
@@ -94,6 +104,9 @@ test('admin service protects and manages the canonical library', async (t) => {
       OCTO_ADMIN_PASSWORD_HASH: `pbkdf2$120000$${salt}$${digest}`,
       GEMINI_API_KEY: '',
       GITHUB_TOKEN: '',
+      CF_ACCOUNT_ID: '',
+      CF_D1_DATABASE_ID: '',
+      CF_D1_API_TOKEN: '',
     },
     stdio: 'ignore',
   });
@@ -114,6 +127,17 @@ test('admin service protects and manages the canonical library', async (t) => {
   const homepageHtml = await homepage.text();
   assert.match(homepageHtml, /Octo Industries/);
   assert.match(homepageHtml, /href="\/admin">Admin Dashboard<\/a>/);
+  const runtimeCatalogResponse = await fetch(`${baseUrl}/api/catalog`);
+  const runtimeCatalog = await runtimeCatalogResponse.json();
+  for (const id of ['8-ball-pool-online', 'baggio-magical-kicks']) {
+    const actual = runtimeCatalog.find((game) => game.id === id);
+    const expected = storedCatalog.find((game) => game.id === id);
+    assert.equal(actual.thumbnail, expected.thumbnail);
+    assert.equal(actual.launch, expected.launch);
+    assert.deepEqual(actual.screenshots, expected.screenshots);
+    assert.equal(actual.sourceFile, expected.sourceFile);
+  }
+  assert.equal(runtimeCatalog.find((game) => game.id === 'baggio-magical-kicks').title, 'Owner-edited Baggio title');
   const publicCatalog = await fetch(`${baseUrl}/Octo-Industries/BehindTheScenes/hub/catalog.js`);
   assert.equal(publicCatalog.status, 200);
   assert.equal(publicCatalog.headers.get('cache-control'), 'no-cache');

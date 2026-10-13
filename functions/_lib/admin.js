@@ -101,6 +101,27 @@ async function readStaticCatalog(request, env) {
   return games;
 }
 
+function refreshCatalogAssetFields(state, catalog) {
+  const catalogById = new Map(catalog.map((game) => [game.id, game]));
+  const fields = ['launch', 'thumbnail', 'screenshots', 'sourceFile'];
+  let changed = false;
+  state.games = state.games.map((game) => {
+    const catalogGame = catalogById.get(game.id);
+    if (!catalogGame) return game;
+    const updates = {};
+    for (const field of fields) {
+      if (Object.prototype.hasOwnProperty.call(catalogGame, field)
+        && JSON.stringify(game[field]) !== JSON.stringify(catalogGame[field])) {
+        updates[field] = catalogGame[field];
+      }
+    }
+    if (!Object.keys(updates).length) return game;
+    changed = true;
+    return { ...game, ...updates };
+  });
+  return changed;
+}
+
 async function loadState(request, env) {
   const catalog = await readStaticCatalog(request, env);
   const existing = await env.ADMIN_DB.prepare('SELECT value FROM admin_state WHERE id = 1').first();
@@ -121,8 +142,9 @@ async function loadState(request, env) {
       catalogDatesUpdated = true;
       return { ...game, addedAt };
     });
+    const catalogAssetsUpdated = refreshCatalogAssetFields(state, catalog);
     const roadmapUpdated = ensureRoadmapState(state);
-    if (newGames.length || roadmapUpdated || catalogDatesUpdated) {
+    if (newGames.length || roadmapUpdated || catalogDatesUpdated || catalogAssetsUpdated) {
       state.games.push(...newGames);
       await saveState(env, state);
     }
