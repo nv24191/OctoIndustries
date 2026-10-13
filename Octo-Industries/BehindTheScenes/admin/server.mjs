@@ -49,6 +49,13 @@ const remoteD1Configured = Boolean(cloudflareAccountId || cloudflareDatabaseId |
 const githubToken = process.env.GITHUB_TOKEN || '';
 const githubRepository = process.env.GITHUB_REPOSITORY || 'nv24191/Personal';
 const adminAssetPaths = new Set(['/admin', '/admin/', '/admin/admin.css', '/admin/admin.js']);
+const revalidateHubAssets = new Set([
+  '/',
+  '/index.html',
+  '/Octo-Industries/BehindTheScenes/hub/app.css',
+  '/Octo-Industries/BehindTheScenes/hub/app.js',
+  '/Octo-Industries/BehindTheScenes/hub/catalog.js',
+]);
 const mimeTypes = new Map([
   ['.avif', 'image/avif'], ['.css', 'text/css; charset=utf-8'], ['.gif', 'image/gif'],
   ['.html', 'text/html; charset=utf-8'], ['.ico', 'image/x-icon'], ['.jpeg', 'image/jpeg'],
@@ -735,7 +742,8 @@ async function runJob(jobId, url) {
       if (!game) throw new Error('Game no longer exists in the library.');
       const launch = resolve(root, ...game.launch.split('/').map(decodeURIComponent));
       const safeLaunch = launch.startsWith(`${root}${sep}`) && (await fs.stat(launch)).isFile();
-      const thumbnailPath = resolve(root, ...String(game.thumbnail || '').split('/').map(decodeURIComponent));
+      const thumbnailReference = String(game.thumbnail || '').split(/[?#]/, 1)[0];
+      const thumbnailPath = resolve(root, ...thumbnailReference.split('/').filter(Boolean).map(decodeURIComponent));
       const thumbnail = Boolean(game.thumbnail && thumbnailPath.startsWith(`${root}${sep}`)
         && (await fs.stat(thumbnailPath).catch(() => null))?.isFile());
       job.result = {
@@ -776,6 +784,7 @@ function validId(id) {
 
 async function serveStatic(pathname, response) {
   const isAdminAsset = adminAssetPaths.has(pathname);
+  const revalidateHubAsset = revalidateHubAssets.has(pathname);
   if (pathname.startsWith('/admin') && !isAdminAsset) {
     sendJson(response, 404, { error: 'Not found.' });
     return;
@@ -806,7 +815,7 @@ async function serveStatic(pathname, response) {
     }
     const file = await fs.readFile(realPath);
     response.writeHead(200, {
-      'Cache-Control': isAdminAsset ? 'no-store' : 'public, max-age=300',
+      'Cache-Control': isAdminAsset ? 'no-store' : revalidateHubAsset ? 'no-cache' : 'public, max-age=300',
       'Content-Type': mimeTypes.get(extname(filePath).toLowerCase()) || 'application/octet-stream',
       'X-Content-Type-Options': 'nosniff',
       ...(isAdminAsset ? {

@@ -6,5 +6,8 @@
   "version": "1.0.0",
   "category": "Sports",
   "tags": ["billiards", "pool", "sports", "arcade"],
-  "launch": "index.html"
+  "launch": "index.html",
+  "thumbnail": "8-ball-billiards-classic.png",
+  "bannerSource": "8-ball-billiards-classic.png",
+  "bannerFit": "contain"
 }

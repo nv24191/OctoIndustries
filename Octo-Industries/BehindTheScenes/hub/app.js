@@ -25,6 +25,7 @@ let activeGallery;
 let galleryIndex = 0;
 const gamesPerPage = 15;
 let currentPage = 1;
+const fallbackBannerUrl = '/Octo-Industries/branding/fallback-banner.svg?v=1';
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -62,7 +63,7 @@ function markPlayed(game) {
 
 function imageMarkup(game, className, contain = false) {
   if (!game.thumbnail) return '';
-  return `<img class="${className}" data-game-id="${escapeHtml(game.id)}" src="${escapeHtml(game.thumbnail)}" alt="" loading="${className === 'featured-image' ? 'eager' : 'lazy'}"${contain ? ' data-contain="true"' : ''}>`;
+  return `<img class="${className}" data-game-id="${escapeHtml(game.id)}" data-source-file="${escapeHtml(game.sourceFile || '')}" src="${escapeHtml(game.thumbnail)}" alt="" loading="${className === 'featured-image' ? 'eager' : 'lazy'}" decoding="async"${contain ? ' data-contain="true"' : ''}>`;
 }
 
 function updateFilterButtonLabel() {
@@ -610,21 +611,36 @@ function bindEvents() {
     const image = event.target;
     if (!(image instanceof HTMLImageElement) || !image.dataset.gameId) return;
     const game = byId.get(image.dataset.gameId);
+    const sourceFile = image.dataset.sourceFile || game?.sourceFile || 'Unknown game source';
+    console.error('[Octo Industries] Banner image failed to load', {
+      requestedUrl: image.currentSrc || image.src,
+      gameTitle: game?.title || 'Unknown game',
+      sourceFile,
+      reason: 'Image failed to load or decode; browsers do not expose HTTP status or CORS details to page scripts.',
+      fallbackAttempted: image.dataset.fallbackAttempted === 'true',
+    });
+    if (image.dataset.fallbackAttempted !== 'true') {
+      image.dataset.fallbackAttempted = 'true';
+      image.src = fallbackBannerUrl;
+      image.alt = `Artwork unavailable for ${game?.title || 'game'}`;
+      return;
+    }
+    const parent = image.parentElement;
     image.remove();
     if (image.classList.contains('game-image')) {
       const fallback = document.createElement('span');
       fallback.className = 'art-index';
       fallback.setAttribute('aria-hidden', 'true');
-      fallback.textContent = String(games.indexOf(game) + 1).padStart(2, '0');
-      image.closest('.game-art').prepend(fallback);
+      fallback.textContent = game ? String(games.indexOf(game) + 1).padStart(2, '0') : '?';
+      parent?.prepend(fallback);
     } else if (image.classList.contains('featured-image')) {
       const orbit = document.createElement('span');
       orbit.className = 'feature-orbit';
       const spark = document.createElement('span');
       spark.className = 'feature-spark';
-      image.closest('.featured-art').append(orbit, spark);
-    } else if (image.classList.contains('recent-image')) {
-      image.closest('.recent-thumb').textContent = game?.title.slice(0, 1) || '?';
+      parent?.append(orbit, spark);
+    } else if (parent) {
+      parent.textContent = game?.title?.slice(0, 1) || '?';
     }
   }, true);
 

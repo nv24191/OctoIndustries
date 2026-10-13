@@ -110,9 +110,16 @@ test('admin service protects and manages the canonical library', async (t) => {
   await waitForHealth(baseUrl, child);
   const homepage = await fetch(baseUrl);
   assert.equal(homepage.status, 200);
+  assert.equal(homepage.headers.get('cache-control'), 'no-cache');
   const homepageHtml = await homepage.text();
   assert.match(homepageHtml, /Octo Industries/);
   assert.match(homepageHtml, /href="\/admin">Admin Dashboard<\/a>/);
+  const publicCatalog = await fetch(`${baseUrl}/Octo-Industries/BehindTheScenes/hub/catalog.js`);
+  assert.equal(publicCatalog.status, 200);
+  assert.equal(publicCatalog.headers.get('cache-control'), 'no-cache');
+  const gameBanner = await fetch(`${baseUrl}/Octo-Industries/Baggio-Magical-Kicks/hub-banner.svg`);
+  assert.equal(gameBanner.status, 200);
+  assert.equal(gameBanner.headers.get('cache-control'), 'public, max-age=300');
   const adminPage = await fetch(`${baseUrl}/admin`);
   assert.equal(adminPage.status, 200);
   const adminHtml = await adminPage.text();
@@ -288,6 +295,7 @@ test('admin service protects and manages the canonical library', async (t) => {
   const health = await waitForJob(baseUrl, headers, (await healthResponse.json()).id);
   assert.equal(health.status, 'completed');
   assert.ok(health.result.checks.some((check) => check.name === 'Launch file exists' && check.passed));
+  assert.ok(health.result.checks.some((check) => check.name === 'Thumbnail available' && check.passed));
 
   const updated = await fetch(`${baseUrl}/api/admin/games/${gameId}`, {
     method: 'PATCH',

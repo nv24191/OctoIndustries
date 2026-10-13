@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,7 +100,7 @@ function screenshotReferences(gameDirectory, configuredScreenshots) {
     }
     const file = resolveGameFile(gameDirectory, value);
     if (!file) throw new Error(`Screenshot does not exist for ${gameDirectory}: ${value}`);
-    return file;
+    return versionedAssetReference(file);
   });
 }
 
@@ -163,6 +164,15 @@ function resolveGameFile(gameDirectory, value) {
   return '';
 }
 
+function versionedAssetReference(file) {
+  const assetPath = resolve(root, ...file.split('/').map(decodeURIComponent));
+  if (!assetPath.startsWith(`${root}${sep}`) || !existsSync(assetPath) || !statSync(assetPath).isFile()) {
+    throw new Error(`Image asset does not exist: ${file}`);
+  }
+  const version = createHash('sha256').update(readFileSync(assetPath)).digest('hex').slice(0, 16);
+  return `/${file}?v=${version}`;
+}
+
 walk(root);
 
 const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
@@ -170,6 +180,7 @@ const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
     ? JSON.parse(readFileSync(manifest, 'utf8'))
     : inferGameMetadata(gameDirectory);
   const source = manifest || gameDirectory;
+  const sourceFile = relative(root, manifest || resolve(gameDirectory, 'index.html')).split(sep).join('/');
   for (const field of ['id', 'title', 'description', 'category', 'launch']) {
     if (!game[field]) throw new Error(`${source} is missing ${field}`);
   }
@@ -195,13 +206,16 @@ const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
 
   return {
     ...metadata,
+    sourceFile,
     addedAt: Number.isFinite(Date.parse(game.addedAt || ''))
       ? game.addedAt
       : previousAddedAt.get(game.id) || syncDate,
-    launch,
-    thumbnail: directThumbnail || (bannerPath
-      ? relative(root, bannerPath).split(sep).map(encodeURIComponent).join('/')
-      : ''),
+    launch: `/${launch}`,
+    thumbnail: directThumbnail
+      ? versionedAssetReference(directThumbnail)
+      : bannerPath
+        ? versionedAssetReference(relative(root, bannerPath).split(sep).map(encodeURIComponent).join('/'))
+        : '',
     screenshots: screenshotReferences(gameDirectory, configuredScreenshots),
     tags: Array.isArray(game.tags) ? game.tags : [],
     featured: game.featured === true,
