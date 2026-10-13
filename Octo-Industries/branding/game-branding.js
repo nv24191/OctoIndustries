@@ -3,14 +3,18 @@
     hubButtonPosition: 'top-left',
     watermarkPosition: 'bottom-right',
   };
-  const settings = window.OCTO_GAME_BRANDING_CONFIG || defaultSettings;
-  window.OCTO_GAME_BRANDING_CONFIG = settings;
+  const corners = new Set(['top-left', 'top-right', 'bottom-left', 'bottom-right']);
+  const storageKey = 'octo-industries.game-home-corner';
+
+  if (!document.body) {
+    return;
+  }
 
   const scriptElement = document.currentScript || Array.from(document.querySelectorAll('script')).find((element) =>
     /game-branding\.js(?:\?|$)/.test(element.src || '')
   );
 
-  if (!scriptElement || !document.body) {
+  if (!scriptElement) {
     return;
   }
 
@@ -18,8 +22,6 @@
   const homeButtonUrl = new URL('home-button.png', scriptUrl).href;
   const watermarkUrl = new URL('watermark-logo.png', scriptUrl).href;
   const hubUrl = new URL('../../index.html#home', scriptUrl).href;
-  const storageKey = 'octo-industries.game-home-corner';
-  const corners = new Set(['top-left', 'top-right', 'bottom-left', 'bottom-right']);
 
   function readPosition(value, fallback, settingName) {
     if (corners.has(value) || (settingName === 'watermarkPosition' && value === 'none')) {
@@ -32,20 +34,18 @@
     return fallback;
   }
 
-  const defaultHomeCorner = readPosition(settings.hubButtonPosition, defaultSettings.hubButtonPosition, 'hubButtonPosition');
-  const watermarkCorner = readPosition(settings.watermarkPosition, defaultSettings.watermarkPosition, 'watermarkPosition');
-  let corner = defaultHomeCorner;
-  try {
-    const savedCorner = localStorage.getItem(storageKey);
-    if (corners.has(savedCorner)) {
-      corner = savedCorner;
-    }
-  } catch (error) {
-    console.warn('The saved Octo Industries home-button position is unavailable.', error);
+  function normalizeSettings(value) {
+    const source = value && typeof value === 'object' ? value : {};
+    return {
+      hubButtonPosition: readPosition(source.hubButtonPosition, defaultSettings.hubButtonPosition, 'hubButtonPosition'),
+      watermarkPosition: readPosition(source.watermarkPosition, defaultSettings.watermarkPosition, 'watermarkPosition'),
+    };
   }
 
-  document.body.dataset.octoHomeCorner = corner;
-  document.body.dataset.octoWatermarkCorner = watermarkCorner;
+  const existingBrand = document.body.querySelector('.octo-game-brand');
+  const existingWatermark = document.body.querySelector('.octo-game-watermark');
+  if (existingBrand) existingBrand.remove();
+  if (existingWatermark) existingWatermark.remove();
 
   const badge = document.createElement('a');
   badge.className = 'octo-game-brand';
@@ -60,24 +60,66 @@
   badgeImage.loading = 'eager';
   badge.append(badgeImage);
 
+  const watermark = document.createElement('img');
+  watermark.className = 'octo-game-watermark';
+  watermark.src = watermarkUrl;
+  watermark.alt = '';
+  watermark.setAttribute('aria-hidden', 'true');
+  watermark.draggable = false;
+  watermark.loading = 'eager';
+
   let drag;
   let suppressClick = false;
+  let corner = defaultSettings.hubButtonPosition;
+  let liveSettings = normalizeSettings(window.OCTO_GAME_BRANDING_CONFIG || defaultSettings);
 
-  function saveCorner(nextCorner) {
-    corner = nextCorner;
+  function syncFromConfig(nextSettings) {
+    liveSettings = normalizeSettings(nextSettings);
+    const nextHomeCorner = readPosition(liveSettings.hubButtonPosition, defaultSettings.hubButtonPosition, 'hubButtonPosition');
+    const nextWatermarkCorner = readPosition(liveSettings.watermarkPosition, defaultSettings.watermarkPosition, 'watermarkPosition');
+
+    try {
+      const savedCorner = localStorage.getItem(storageKey);
+      if (corners.has(savedCorner)) {
+        corner = savedCorner;
+      } else {
+        corner = nextHomeCorner;
+      }
+    } catch (error) {
+      corner = nextHomeCorner;
+      console.warn('The saved Octo Industries home-button position is unavailable.', error);
+    }
+
     document.body.dataset.octoHomeCorner = corner;
+    document.body.dataset.octoWatermarkCorner = nextWatermarkCorner;
     badge.style.left = '';
     badge.style.top = '';
     badge.style.right = '';
     badge.style.bottom = '';
     badge.classList.remove('is-dragging');
 
-    try {
-      localStorage.setItem(storageKey, corner);
-    } catch (error) {
-      console.warn('The Octo Industries home-button position could not be saved.', error);
+    if (nextWatermarkCorner === 'none') {
+      watermark.remove();
+      return;
+    }
+
+    if (!watermark.isConnected) {
+      document.body.append(watermark);
     }
   }
+
+  Object.defineProperty(window, 'OCTO_GAME_BRANDING_CONFIG', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return liveSettings;
+    },
+    set(nextValue) {
+      syncFromConfig(nextValue);
+    },
+  });
+
+  syncFromConfig(window.OCTO_GAME_BRANDING_CONFIG || defaultSettings);
 
   badge.addEventListener('pointerdown', (event) => {
     if (!event.isPrimary || event.button !== 0) {
@@ -128,11 +170,34 @@
 
     if (drag.moved) {
       suppressClick = event.type === 'pointerup';
-      saveCorner(`${event.clientY < window.innerHeight / 2 ? 'top' : 'bottom'}-${event.clientX < window.innerWidth / 2 ? 'left' : 'right'}`);
+      const nextCorner = `${event.clientY < window.innerHeight / 2 ? 'top' : 'bottom'}-${event.clientX < window.innerWidth / 2 ? 'left' : 'right'}`;
+      corner = nextCorner;
+      document.body.dataset.octoHomeCorner = nextCorner;
+      try {
+        localStorage.setItem(storageKey, nextCorner);
+      } catch (error) {
+        console.warn('The Octo Industries home-button position could not be saved.', error);
+      }
       event.preventDefault();
       event.stopPropagation();
     }
     drag = undefined;
+  }
+
+  function saveCorner(nextCorner) {
+    corner = nextCorner;
+    document.body.dataset.octoHomeCorner = corner;
+    badge.style.left = '';
+    badge.style.top = '';
+    badge.style.right = '';
+    badge.style.bottom = '';
+    badge.classList.remove('is-dragging');
+
+    try {
+      localStorage.setItem(storageKey, corner);
+    } catch (error) {
+      console.warn('The Octo Industries home-button position could not be saved.', error);
+    }
   }
 
   badge.addEventListener('pointerup', finishDrag);
@@ -165,16 +230,9 @@
     badge.focus();
   });
 
-  const watermark = document.createElement('img');
-  watermark.className = 'octo-game-watermark';
-  watermark.src = watermarkUrl;
-  watermark.alt = '';
-  watermark.setAttribute('aria-hidden', 'true');
-  watermark.draggable = false;
-  watermark.loading = 'eager';
-
+  document.body.dataset.octoBrandingOverlayInstalled = 'true';
   document.body.append(badge);
-  if (watermarkCorner !== 'none') {
+  if (document.body.dataset.octoWatermarkCorner !== 'none') {
     document.body.append(watermark);
   }
 })();

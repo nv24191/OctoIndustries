@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureGameBranding } from './branding-injection.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const gameCollection = resolve(root, 'Octo-Industries');
@@ -187,6 +188,12 @@ const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
 
   const launch = resolveGameFile(gameDirectory, game.launch);
   if (!launch) throw new Error(`${game.title} has no valid launch file: ${game.launch}`);
+  const launchFile = resolve(root, ...launch.split('/').map(decodeURIComponent));
+  if (/\.html?$/i.test(launchFile)) {
+    const launchHtml = readFileSync(launchFile, 'utf8');
+    const brandedHtml = ensureGameBranding(launchHtml, launchFile, root);
+    if (brandedHtml !== launchHtml) writeFileSync(launchFile, brandedHtml);
+  }
 
   const bannerPath = game.bannerSource || game.thumbnail
     ? resolve(gameDirectory, 'hub-banner.svg')

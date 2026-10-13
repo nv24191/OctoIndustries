@@ -129,6 +129,13 @@ test('admin service protects and manages the canonical library', async (t) => {
   assert.match(homepageHtml, /href="\/admin">Admin Dashboard<\/a>/);
   const runtimeCatalogResponse = await fetch(`${baseUrl}/api/catalog`);
   const runtimeCatalog = await runtimeCatalogResponse.json();
+  for (const game of runtimeCatalog) {
+    const launchResponse = await fetch(`${baseUrl}${game.launch}`);
+    assert.equal(launchResponse.status, 200, `${game.title} launch page should be served`);
+    const launchHtml = await launchResponse.text();
+    assert.match(launchHtml, /game-branding\.css/, `${game.title} should load shared branding styles`);
+    assert.match(launchHtml, /game-branding\.js/, `${game.title} should load the shared home button`);
+  }
   for (const id of ['8-ball-pool-online', 'baggio-magical-kicks']) {
     const actual = runtimeCatalog.find((game) => game.id === id);
     const expected = storedCatalog.find((game) => game.id === id);

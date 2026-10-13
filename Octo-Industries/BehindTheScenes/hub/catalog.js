@@ -80,6 +80,29 @@ window.OCTO_GAMES = Object.freeze([
     "featured": false
   },
   {
+    "id": "cookie-clicker",
+    "addedAt": "2026-10-13T00:00:00.000Z",
+    "title": "Cookie Clicker",
+    "description": "Bake cookies, automate your bakery, and chase endless idle progression in a classic incremental clicker loop.",
+    "version": "2.058",
+    "category": "Idle",
+    "tags": [
+      "clicker",
+      "incremental",
+      "idle",
+      "bakery",
+      "management"
+    ],
+    "launch": "/Octo-Industries/Cookie-Clicker/index.html",
+    "thumbnail": "/Octo-Industries/Cookie-Clicker/hub-banner.svg?v=033b9b94d1bf23f5",
+    "accent": "#f4c856",
+    "sourceFile": "Octo-Industries/Cookie-Clicker/game.json",
+    "screenshots": [
+      "/Octo-Industries/Cookie-Clicker/screenshots/cookie-clicker-gameplay.png?v=808d7b228eff2dba"
+    ],
+    "featured": false
+  },
+  {
     "id": "endless-siege",
     "addedAt": "2026-10-06T12:00:00.000Z",
     "title": "Endless Siege",
