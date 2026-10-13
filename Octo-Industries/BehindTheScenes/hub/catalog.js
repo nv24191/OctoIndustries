@@ -222,6 +222,27 @@ window.OCTO_GAMES = Object.freeze([
     ]
   },
   {
+    "id": "tap-tap-shots",
+    "title": "Tap Tap Shots",
+    "description": "Sink quick shots, pace your aim, and build a streak in this fast arcade basketball challenge.",
+    "addedAt": "2026-10-13T00:00:00.000Z",
+    "version": "1.0.0",
+    "category": "Sports",
+    "tags": [
+      "basketball",
+      "arcade",
+      "timing",
+      "sports"
+    ],
+    "launch": "Octo-Industries/Tap-Tap-Shots/index.html",
+    "thumbnail": "Octo-Industries/Tap-Tap-Shots/hub-banner.svg",
+    "accent": "#f5c95b",
+    "screenshots": [
+      "Octo-Industries/Tap-Tap-Shots/screenshots/01-gameplay.jpg"
+    ],
+    "featured": false
+  },
+  {
     "id": "tiny-fishing",
     "addedAt": "2026-10-06T12:00:00.000Z",
     "title": "Tiny Fishing",

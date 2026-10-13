@@ -25,7 +25,6 @@ let activeGallery;
 let galleryIndex = 0;
 const gamesPerPage = 15;
 let currentPage = 1;
-const gamesWithoutGalleryButton = new Set(['ragdoll-hit', 'red-ball-4', 'subway-surfers-new-york', 'miragine-war']);
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -88,7 +87,6 @@ function categories() {
 function gameCard(game, index, localPlayCount = null) {
   const tags = [game.category, ...(game.tags || [])].filter((tag, position, list) => list.indexOf(tag) === position).slice(0, 2);
   const hasThumbnail = Boolean(game.thumbnail);
-  const hasGallery = Array.isArray(game.screenshots) && game.screenshots.length > 0 && !gamesWithoutGalleryButton.has(game.id);
   return `
     <article class="game-card" style="animation-delay:${Math.min(index * 45, 225)}ms" data-game-id="${escapeHtml(game.id)}">
       <a class="game-art" data-category="${escapeHtml(game.category)}" href="${escapeHtml(game.launch)}" data-launch-id="${escapeHtml(game.id)}" aria-label="Play ${escapeHtml(game.title)}">
@@ -98,7 +96,7 @@ function gameCard(game, index, localPlayCount = null) {
       </a>
       <div class="game-card-copy">
         <div><div class="game-heading-line"><h3>${escapeHtml(game.title)}</h3><span class="category-label">${escapeHtml(game.category.toUpperCase())}</span></div><p class="game-description">${escapeHtml(game.description)}</p></div>
-        <div class="game-card-foot"><div class="game-tags">${tags.map((tag) => `<span class="game-tag">#${escapeHtml(tag.toLowerCase())}</span>`).join('')}</div><div class="game-card-actions">${hasGallery ? `<button class="gallery-link" type="button" data-gallery-id="${escapeHtml(game.id)}" aria-label="View ${escapeHtml(game.title)} screenshots">IMAGES</button>` : ''}<a class="play-link" href="${escapeHtml(game.launch)}" data-launch-id="${escapeHtml(game.id)}"><span aria-hidden="true">▶</span> PLAY</a></div></div>
+        <div class="game-card-foot"><div class="game-tags">${tags.map((tag) => `<span class="game-tag">#${escapeHtml(tag.toLowerCase())}</span>`).join('')}</div><div class="game-card-actions"><a class="play-link" href="${escapeHtml(game.launch)}" data-launch-id="${escapeHtml(game.id)}"><span aria-hidden="true">▶</span> PLAY</a></div></div>
       </div>
     </article>`;
 }
