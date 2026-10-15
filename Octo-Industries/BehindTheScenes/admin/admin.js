@@ -3,6 +3,9 @@ const dashboardView = document.querySelector('#dashboard-view');
 const loginForm = document.querySelector('#login-form');
 const loginMessage = document.querySelector('#login-message');
 const logoutButton = document.querySelector('#logout-button');
+const dashboardError = document.querySelector('#dashboard-error');
+const dashboardErrorMessage = document.querySelector('#dashboard-error-message');
+const dashboardRetryButton = document.querySelector('#dashboard-retry');
 const toast = document.querySelector('#toast');
 let csrfToken = '';
 let dashboard;
@@ -205,6 +208,7 @@ function showToast(message) {
 function showLogin(message = '') {
   clearInterval(refreshTimer);
   csrfToken = '';
+  dashboardError.hidden = true;
   setDrawerOpen(false);
   dashboardView.hidden = true;
   loginView.hidden = false;
@@ -769,6 +773,7 @@ async function refreshDashboard() {
   renderFeedback();
   renderRoadmap();
   renderOverview();
+  dashboardError.hidden = true;
   if (dashboard.jobs.some((job) => job.status === 'queued' || job.status === 'running')) {
     if (!refreshTimer) refreshTimer = setInterval(() => refreshDashboard().catch((error) => showToast(error.message)), 2200);
   } else {
@@ -776,6 +781,22 @@ async function refreshDashboard() {
     refreshTimer = null;
   }
 }
+
+function showDashboardError(error) {
+  dashboardErrorMessage.textContent = `Dashboard data could not be loaded: ${error.message} Check the Render service logs if this continues.`;
+  dashboardError.hidden = false;
+}
+
+dashboardRetryButton.addEventListener('click', async () => {
+  dashboardRetryButton.disabled = true;
+  try {
+    await refreshDashboard();
+  } catch (error) {
+    if (error.message !== 'Admin authentication required.') showDashboardError(error);
+  } finally {
+    dashboardRetryButton.disabled = false;
+  }
+});
 
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -798,7 +819,8 @@ loginForm.addEventListener('submit', async (event) => {
     await refreshDashboard();
   } catch (error) {
     document.querySelector('#password').value = '';
-    showMessage(loginMessage, error.message);
+    if (dashboardView.hidden) showMessage(loginMessage, error.message);
+    else if (error.message !== 'Admin authentication required.') showDashboardError(error);
   } finally {
     button.disabled = false;
   }
@@ -1311,9 +1333,14 @@ async function initialize() {
     const session = await api('/api/admin/session');
     csrfToken = session.csrfToken;
     showDashboard();
-    await refreshDashboard();
   } catch (error) {
     if (error.message !== 'Admin authentication required.') showMessage(loginMessage, error.message);
+    return;
+  }
+  try {
+    await refreshDashboard();
+  } catch (error) {
+    if (error.message !== 'Admin authentication required.') showDashboardError(error);
   }
 }
 
