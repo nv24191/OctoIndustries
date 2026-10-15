@@ -249,6 +249,14 @@
           <p>Share suggestions, issues, bug reports, game requests, or collaboration ideas using the same public intake the team already uses.</p>
           <button class="button button-primary" id="inquiries-open" type="button">Open Inquiries Form</button>
         </div>
+        <section class="ticket-portal" aria-labelledby="my-tickets-heading">
+          <div class="section-heading">
+            <div><p class="eyebrow"><span class="eyebrow-line"></span> SUPPORT</p><h2 id="my-tickets-heading">My Tickets</h2></div>
+            <button class="button button-secondary" id="my-tickets-refresh" type="button" aria-label="Refresh my tickets">Refresh</button>
+          </div>
+          <p class="ticket-portal-note">Your tickets are available in this browser. Clearing its saved site data removes access.</p>
+          <div class="my-tickets-list" id="my-tickets-list" aria-live="polite"><p class="ticket-empty">No saved tickets yet.</p></div>
+        </section>
       </div>
     </section>
 
@@ -278,7 +286,7 @@
       </select>
       <label for="feedback-message">Your message</label>
       <textarea id="feedback-message" name="message" rows="5" maxlength="5000" placeholder="Tell us about your suggestion or issue..." required></textarea>
-      <p class="feedback-privacy">No name, email, account, or phone number is needed. We only collect basic device details to help us investigate.</p>
+      <p class="feedback-privacy">No name, email, account, or phone number is needed. Basic device details help investigate issues; ticket access is saved in this browser.</p>
       <p class="feedback-status" id="feedback-status" role="status" aria-live="polite" hidden></p>
       <div class="feedback-actions"><button class="button button-secondary" id="feedback-cancel" type="button">Cancel</button><button class="button button-primary" id="feedback-submit" type="submit">Send</button></div>
     </form>

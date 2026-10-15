@@ -17,6 +17,27 @@
   pointer-events: none;
 }
 
+.octo-loader-game-art {
+  display: block;
+  width: min(56vw, 320px);
+  max-height: 26vh;
+  object-fit: contain;
+}
+
+.octo-loader-game-title {
+  color: #f5f3f7;
+  font: 700 clamp(20px, 5vw, 30px)/1.1 system-ui, sans-serif;
+  text-align: center;
+}
+
+.octo-loader.has-game-media {
+  gap: 12px;
+}
+
+.octo-loader.has-game-media .octo-loader-ring {
+  width: min(24vmin, 130px);
+}
+
 .octo-loader-ring {
   position: relative;
   display: grid;

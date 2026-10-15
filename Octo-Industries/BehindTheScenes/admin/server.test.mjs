@@ -235,6 +235,21 @@ test('admin service protects and manages the canonical library', async (t) => {
     }),
   });
   assert.equal(feedbackResponse.status, 201);
+  const ticketCredentials = await feedbackResponse.json();
+  assert.equal(ticketCredentials.ticketNumber, 1001);
+  assert.match(ticketCredentials.accessToken, /^[a-f\d]{64}$/);
+  const ticketHeaders = { 'X-Ticket-Access-Token': ticketCredentials.accessToken };
+  const publicTicketResponse = await fetch(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}`, { headers: ticketHeaders });
+  assert.equal(publicTicketResponse.status, 200);
+  const publicTicket = await publicTicketResponse.json();
+  assert.equal(publicTicket.ticketNumber, 1001);
+  assert.equal('adminNotes' in publicTicket, false);
+  assert.equal('deviceInfo' in publicTicket, false);
+  const userReply = await fetch(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}/messages`, {
+    method: 'POST', headers: { ...ticketHeaders, Origin: baseUrl, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'I can share more details.' }),
+  });
+  assert.equal(userReply.status, 201);
   const secondFeedbackResponse = await fetch(`${baseUrl}/api/feedback`, {
     method: 'POST',
     headers: { Origin: baseUrl, 'Content-Type': 'application/json' },
@@ -247,7 +262,7 @@ test('admin service protects and manages the canonical library', async (t) => {
   const feedbackItems = await feedbackResponseList.json();
   assert.equal(feedbackItems.length, 2);
   const issueFeedback = feedbackItems.find((entry) => entry.type === 'issue');
-  assert.equal(issueFeedback.status, 'new');
+  assert.equal(issueFeedback.status, 'under_review');
   assert.equal(issueFeedback.gameId, initialCatalog[0].id);
   assert.equal(issueFeedback.deviceInfo.userAgent, undefined);
   assert.equal(issueFeedback.deviceInfo.browser, 'Chrome');
@@ -255,7 +270,7 @@ test('admin service protects and manages the canonical library', async (t) => {
   const markSeen = await fetch(`${baseUrl}/api/admin/feedback/${issueFeedback.id}/status`, {
     method: 'PATCH',
     headers: writeHeaders,
-    body: JSON.stringify({ status: 'seen' }),
+    body: JSON.stringify({ status: 'under_review' }),
   });
   assert.equal(markSeen.status, 200);
   const saveNotes = await fetch(`${baseUrl}/api/admin/feedback/${issueFeedback.id}/notes`, {
@@ -264,15 +279,45 @@ test('admin service protects and manages the canonical library', async (t) => {
     body: JSON.stringify({ adminNotes: 'Test this on desktop Chrome.' }),
   });
   assert.equal(saveNotes.status, 200);
+  const adminReply = await fetch(`${baseUrl}/api/admin/feedback/${issueFeedback.id}/reply`, {
+    method: 'POST', headers: writeHeaders, body: JSON.stringify({ message: 'We are reviewing this report.' }),
+  });
+  assert.equal(adminReply.status, 201);
+  const ownerTicketAfterAdminReply = await (await fetch(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}`, {
+    headers: ticketHeaders,
+  })).json();
+  assert.equal(ownerTicketAfterAdminReply.status, 'awaiting_user_reply');
+  assert.equal(ownerTicketAfterAdminReply.conversation.length, 3);
+  const adminConversation = await (await fetch(`${baseUrl}/api/admin/feedback/${issueFeedback.id}/conversation`, { headers })).json();
+  assert.equal(adminConversation.conversation.length, 3);
+  assert.ok(adminConversation.activity.some((entry) => (entry.action || '').includes('reply')));
+  const setPriority = await fetch(`${baseUrl}/api/admin/feedback/${issueFeedback.id}/priority`, {
+    method: 'PATCH', headers: writeHeaders, body: JSON.stringify({ priority: 'high' }),
+  });
+  assert.equal(setPriority.status, 200);
+  const archiveTicket = await fetch(`${baseUrl}/api/admin/feedback/${issueFeedback.id}/archive`, {
+    method: 'POST', headers: writeHeaders, body: '{}',
+  });
+  assert.equal((await archiveTicket.json()).archived, true);
+  const unarchiveTicket = await fetch(`${baseUrl}/api/admin/feedback/${issueFeedback.id}/unarchive`, {
+    method: 'POST', headers: writeHeaders, body: '{}',
+  });
+  assert.equal((await unarchiveTicket.json()).archived, false);
   const bulkArchive = await fetch(`${baseUrl}/api/admin/feedback/bulk`, {
     method: 'POST',
     headers: writeHeaders,
-    body: JSON.stringify({ ids: feedbackItems.map((entry) => entry.id), status: 'archived' }),
+    body: JSON.stringify({ ids: feedbackItems.map((entry) => entry.id), status: 'closed' }),
   });
   assert.equal(bulkArchive.status, 200);
   const archivedFeedback = await (await fetch(`${baseUrl}/api/admin/feedback`, { headers })).json();
-  assert.ok(archivedFeedback.every((entry) => entry.status === 'archived'));
+  assert.ok(archivedFeedback.every((entry) => entry.status === 'closed'));
   assert.equal(archivedFeedback.find((entry) => entry.id === issueFeedback.id).adminNotes, 'Test this on desktop Chrome.');
+  const bulkActivity = await (await fetch(`${baseUrl}/api/admin/feedback/${issueFeedback.id}/conversation`, { headers })).json();
+  assert.ok(bulkActivity.activity.some((entry) => (entry.action || '').includes('status_closed')));
+  const deleteTicket = await fetch(`${baseUrl}/api/admin/feedback/${issueFeedback.id}`, { method: 'DELETE', headers: writeHeaders });
+  assert.equal(deleteTicket.status, 200);
+  assert.equal((await (await fetch(`${baseUrl}/api/admin/feedback`, { headers })).json()).length, 1);
+  assert.equal((await fetch(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}`, { headers: ticketHeaders })).status, 404);
 
   const unauthenticatedChat = await fetch(`${baseUrl}/api/admin/chat`, {
     method: 'POST',

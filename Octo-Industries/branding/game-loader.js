@@ -2,7 +2,7 @@
   const scriptUrl = (document.currentScript && document.currentScript.src) || '';
   const logoUrl = new URL('primary-logo.png', scriptUrl).href;
 
-  function show() {
+  function show(options = {}) {
     const el = document.createElement('div');
     el.className = 'octo-loader';
     el.setAttribute('role', 'progressbar');
@@ -28,6 +28,26 @@
       <div class="octo-loader-bar"><i></i></div>
       <div class="octo-loader-percent">0%</div>
       <button class="octo-loader-play" type="button">TAP TO PLAY</button>`;
+    const settings = options && typeof options === 'object' ? options : {};
+    if (settings.artwork || settings.title) {
+      const media = [];
+      if (settings.artwork) {
+        const artwork = document.createElement('img');
+        artwork.className = 'octo-loader-game-art';
+        artwork.src = settings.artwork;
+        artwork.alt = settings.title ? `${settings.title} artwork` : 'Game artwork';
+        artwork.decoding = 'async';
+        media.push(artwork);
+      }
+      if (settings.title) {
+        const title = document.createElement('div');
+        title.className = 'octo-loader-game-title';
+        title.textContent = settings.title;
+        media.push(title);
+      }
+      el.classList.add('has-game-media');
+      el.prepend(...media);
+    }
     (document.body || document.documentElement).append(el);
 
     const percent = el.querySelector('.octo-loader-percent');

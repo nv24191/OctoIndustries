@@ -207,6 +207,9 @@ const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
     ...metadata
   } = game;
   const directThumbnail = thumbnailDirect ? resolveGameFile(gameDirectory, game.thumbnail || '') : '';
+  const banner = bannerPath
+    ? versionedAssetReference(relative(root, bannerPath).split(sep).map(encodeURIComponent).join('/'))
+    : '';
   if (thumbnailDirect && !directThumbnail) {
     throw new Error(`Direct thumbnail does not exist for ${game.title}: ${game.thumbnail}`);
   }
@@ -214,6 +217,7 @@ const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
   return {
     ...metadata,
     sourceFile,
+    banner,
     addedAt: Number.isFinite(Date.parse(game.addedAt || ''))
       ? game.addedAt
       : previousAddedAt.get(game.id) || syncDate,

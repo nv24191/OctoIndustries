@@ -46,7 +46,18 @@ h2 { margin-bottom: 0; font-size: 22px; }
 .feedback-inbox { grid-column: 1 / -1; }
 .feedback-inbox h2 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .feedback-new-badge { padding: 5px 9px; border: 1px solid rgba(255, 146, 136, .35); border-radius: 30px; color: var(--red); font-size: 10px; letter-spacing: 0; }
-.feedback-toolbar { display: grid; grid-template-columns: minmax(190px, 1.7fr) repeat(4, minmax(120px, 1fr)); gap: 8px; }
+.ticket-analytics { display: grid; gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.ticket-analytics h3 { margin: 0; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.ticket-analytics-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.ticket-analytics-metrics div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ticket-analytics-metrics span { color: var(--muted); font-size: 10px; }
+.ticket-analytics-metrics strong { color: var(--cyan); font-size: 17px; font-variant-numeric: tabular-nums; }
+.ticket-status-breakdown { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px 12px; }
+.ticket-status-count { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px 8px; color: var(--muted); font-size: 9px; }
+.ticket-status-count strong { color: var(--ink); font-size: 10px; font-variant-numeric: tabular-nums; }
+.ticket-status-count i { height: 3px; grid-column: 1 / -1; background: rgba(191, 221, 232, .1); }
+.ticket-status-count i::after { display: block; width: var(--ticket-status-share); height: 100%; background: var(--cyan); content: ''; }
+.feedback-toolbar { display: grid; grid-template-columns: minmax(190px, 1.7fr) repeat(5, minmax(120px, 1fr)); gap: 8px; }
 .feedback-toolbar select, .feedback-bulk select, .feedback-controls select { min-height: 44px; padding: 0 9px; font-size: 11px; }
 .feedback-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .feedback-bulk .check-label { margin: 0; }
@@ -64,13 +75,32 @@ h2 { margin-bottom: 0; font-size: 22px; }
 .feedback-game, .feedback-time, .feedback-device, .feedback-updated { color: var(--muted); font-size: 10px; }
 .feedback-time { margin-left: auto; text-align: right; }
 .feedback-message { margin: 0; color: var(--ink); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
-.feedback-controls { display: flex; align-items: center; gap: 12px; }
+.feedback-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
 .feedback-controls label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; }
-.feedback-controls select { width: auto; min-width: 150px; }
+.feedback-controls select { width: auto; min-width: 142px; }
 .feedback-card details { border-top: 1px solid var(--line); padding-top: 9px; }
 .feedback-card summary { color: var(--cyan); cursor: pointer; font-size: 11px; }
 .feedback-card details label { display: block; margin: 10px 0 5px; color: var(--muted); font-size: 10px; }
 .feedback-card details textarea { display: block; min-height: 70px; margin-bottom: 8px; font-size: 11px; line-height: 1.5; }
+.feedback-ticket-number { color: var(--ink); font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.feedback-device-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+.feedback-device-details div { min-width: 0; padding: 8px; background: rgba(7, 19, 28, .55); }
+.feedback-device-details dt { color: var(--muted); font-size: 9px; }
+.feedback-device-details dd { margin: 4px 0 0; color: var(--ink); font-size: 10px; overflow-wrap: anywhere; }
+.feedback-conversation { display: grid; gap: 10px; margin-top: 10px; }
+.feedback-conversation-list, .feedback-activity-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.feedback-conversation-list li { padding: 10px; border-left: 2px solid var(--cyan); background: rgba(7, 19, 28, .58); }
+.feedback-conversation-list li[data-author="admin"] { border-left-color: var(--red); }
+.feedback-conversation-list li > div, .feedback-activity-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; }
+.feedback-conversation-list strong { color: var(--ink); font-size: 10px; }
+.feedback-conversation-list time, .feedback-activity-list time { color: var(--muted); font-size: 9px; }
+.feedback-conversation-list p { margin: 7px 0 0; color: var(--ink); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.feedback-activity-list { padding-top: 8px; border-top: 1px solid var(--line); }
+.feedback-activity-list li { color: var(--muted); font-size: 9px; }
+.feedback-reply-form { display: grid; gap: 7px; max-width: 760px; margin-top: 12px; }
+.feedback-reply-form textarea { width: 100%; min-height: 76px; padding: 9px; border: 1px solid var(--line); border-radius: 5px; background: #071019; color: var(--ink); font: inherit; resize: vertical; }
+.feedback-reply-form button { justify-self: start; }
+.feedback-reply-form [data-admin-reply-status] { min-height: 1em; margin: 0; color: var(--muted); font-size: 10px; }
 .feedback-empty { padding: 10px 0; }
 .panel { min-width: 0; padding: 15px; border-radius: 9px; }
 .agent-panel, .chat-panel { margin-bottom: 0; }
@@ -202,9 +232,12 @@ form label { display: block; margin: 13px 0 7px; color: var(--muted); font-size:
   .metric strong { font-size: 21px; }
   .feedback-toolbar { grid-template-columns: 1fr; }
   .feedback-toolbar input { grid-column: auto; }
+  .ticket-analytics-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ticket-status-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .feedback-card-top { align-items: flex-start; }
   .feedback-time { max-width: 45%; font-size: 9px; }
   .feedback-controls { align-items: flex-start; flex-direction: column; }
+  .feedback-device-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .panel { padding: 12px; }
   .url-form { flex-direction: column; }
   .chat-form { align-items: stretch; flex-direction: column; }

@@ -2,6 +2,7 @@
   const defaultSettings = {
     hubButtonPosition: 'top-left',
     watermarkPosition: 'bottom-right',
+    watermarkOpacity: 0.15,
   };
   const corners = new Set(['top-left', 'top-right', 'bottom-left', 'bottom-right']);
   const storageKey = 'octo-industries.game-home-corner';
@@ -36,9 +37,17 @@
 
   function normalizeSettings(value) {
     const source = value && typeof value === 'object' ? value : {};
+    const opacity = source.watermarkOpacity;
+    const watermarkOpacity = typeof opacity === 'number' && Number.isFinite(opacity) && opacity >= 0 && opacity <= 1
+      ? opacity
+      : defaultSettings.watermarkOpacity;
+    if (opacity !== undefined && watermarkOpacity !== opacity) {
+      console.warn('Invalid Octo Industries watermarkOpacity setting; using 0.15.');
+    }
     return {
       hubButtonPosition: readPosition(source.hubButtonPosition, defaultSettings.hubButtonPosition, 'hubButtonPosition'),
       watermarkPosition: readPosition(source.watermarkPosition, defaultSettings.watermarkPosition, 'watermarkPosition'),
+      watermarkOpacity,
     };
   }
 
@@ -92,6 +101,7 @@
 
     document.body.dataset.octoHomeCorner = corner;
     document.body.dataset.octoWatermarkCorner = nextWatermarkCorner;
+    document.body.style.setProperty('--octo-watermark-opacity', String(liveSettings.watermarkOpacity));
     badge.style.left = '';
     badge.style.top = '';
     badge.style.right = '';

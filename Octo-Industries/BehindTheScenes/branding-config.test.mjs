@@ -8,6 +8,7 @@ async function evaluateBrandingScript() {
   const appended = [];
   const body = {
     dataset: {},
+    style: { setProperty(name, value) { this[name] = value; } },
     append: (...nodes) => {
       for (const node of nodes.filter(Boolean)) {
         node.isConnected = true;
@@ -94,14 +95,17 @@ test('global branding config updates the live overlay without duplicating badges
 
   assert.equal(body.dataset.octoHomeCorner, 'top-left');
   assert.equal(body.dataset.octoWatermarkCorner, 'bottom-right');
+  assert.equal(body.style['--octo-watermark-opacity'], '0.15');
   assert.equal(appended.filter((node) => node.className === 'octo-game-brand').length, 1);
 
   windowObject.OCTO_GAME_BRANDING_CONFIG = {
     hubButtonPosition: 'bottom-left',
     watermarkPosition: 'none',
+    watermarkOpacity: 0.32,
   };
 
   assert.equal(body.dataset.octoHomeCorner, 'bottom-left');
   assert.equal(body.dataset.octoWatermarkCorner, 'none');
+  assert.equal(body.style['--octo-watermark-opacity'], '0.32');
   assert.equal(appended.filter((node) => node.className === 'octo-game-brand').length, 1);
 });

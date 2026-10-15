@@ -19,6 +19,8 @@ import {
   feedbackSchemaStatements,
   normalizeFeedback,
   validateAdminNotes,
+  validateConversationMessage,
+  validateFeedbackPriority,
   validateFeedbackStatus,
   validateFeedbackSubmission,
 } from '../../../functions/_lib/feedback.js';
@@ -42,6 +44,7 @@ const loginAttempts = new Map();
 const loginChallenges = new Map();
 const feedbackRateLimits = new Map();
 let feedbackSchemaInitialization;
+let localTicketSequence;
 const cloudflareAccountId = process.env.CF_ACCOUNT_ID || '';
 const cloudflareDatabaseId = process.env.CF_D1_DATABASE_ID || '';
 const cloudflareApiToken = process.env.CF_D1_API_TOKEN || '';
@@ -182,22 +185,56 @@ async function ensureFeedbackSchema() {
 
 async function feedbackRows() {
   if (remoteD1Configured) {
-    const result = await d1Query('SELECT * FROM feedback_submissions ORDER BY created_at DESC');
+    const result = await d1Query('SELECT * FROM feedback_submissions WHERE deleted_at IS NULL ORDER BY created_at DESC');
     return (result.results || []).map(normalizeFeedback);
   }
   state.feedback = Array.isArray(state.feedback) ? state.feedback : [];
-  return state.feedback;
+  const unnumbered = state.feedback.filter((entry) => !Number.isInteger(entry.ticketNumber))
+    .sort((first, second) => first.createdAt.localeCompare(second.createdAt) || first.id.localeCompare(second.id));
+  let nextNumber = Math.max(1000, ...state.feedback.map((entry) => entry.ticketNumber || 1000));
+  for (const entry of unnumbered) entry.ticketNumber = ++nextNumber;
+  if (unnumbered.length) await saveState();
+  return state.feedback.filter((entry) => !entry.deletedAt).map(({ accessTokenHash, ...entry }) => {
+    const legacyArchived = entry.status === 'archived';
+    return {
+      ...entry,
+      status: ({ seen: 'under_review', working: 'in_progress', important: 'under_review', archived: 'closed' })[entry.status] || entry.status,
+      ticketNumber: entry.ticketNumber || null,
+      userAccessEnabled: Boolean(entry.accessTokenHash),
+      priority: entry.priority || 'medium',
+      archived: Boolean(entry.archivedAt) || legacyArchived,
+      deleted: Boolean(entry.deletedAt),
+    };
+  });
+}
+
+async function nextTicketNumber() {
+  if (remoteD1Configured) {
+    const result = await d1Query('UPDATE feedback_ticket_sequence SET next_number = next_number + 1 WHERE id = 1 RETURNING next_number - 1 AS ticket_number');
+    const number = result.results?.[0]?.ticket_number;
+    if (!Number.isInteger(number)) throw new Error('The ticket number sequence returned an invalid result.');
+    return number;
+  }
+  state.feedback = Array.isArray(state.feedback) ? state.feedback : [];
+  if (!Number.isInteger(localTicketSequence)) {
+    localTicketSequence = Math.max(1000, ...state.feedback.map((entry) => entry.ticketNumber || 1000)) + 1;
+  }
+  return localTicketSequence++;
 }
 
 async function insertFeedback(feedback) {
   if (remoteD1Configured) {
     await d1Query(
-      'INSERT INTO feedback_submissions (id, type, game_id, message, device_info, status, admin_notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [feedback.id, feedback.type, feedback.gameId, feedback.message, JSON.stringify(feedback.deviceInfo), feedback.status,
-        feedback.adminNotes, feedback.createdAt, feedback.updatedAt],
+      'INSERT INTO feedback_submissions (id, ticket_number, access_token_hash, type, game_id, message, device_info, status, priority, admin_notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [feedback.id, feedback.ticketNumber, feedback.accessTokenHash, feedback.type, feedback.gameId, feedback.message,
+        JSON.stringify(feedback.deviceInfo), feedback.status, feedback.priority, feedback.adminNotes, feedback.createdAt, feedback.updatedAt],
     );
+    await d1Query('INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+      [randomBytes(10).toString('hex'), feedback.id, 'created', 'user', feedback.createdAt]);
   } else {
     state.feedback = Array.isArray(state.feedback) ? state.feedback : [];
+    feedback.conversation = [];
+    feedback.activity = [{ action: 'created', actorType: 'user', createdAt: feedback.createdAt }];
     state.feedback.unshift(feedback);
     await saveState();
   }
@@ -206,7 +243,7 @@ async function insertFeedback(feedback) {
 async function updateFeedback(id, updates) {
   const updatedAt = new Date().toISOString();
   if (remoteD1Configured) {
-    const columns = { status: 'status', adminNotes: 'admin_notes' };
+    const columns = { status: 'status', adminNotes: 'admin_notes', priority: 'priority', archivedAt: 'archived_at', deletedAt: 'deleted_at' };
     const entries = Object.entries(updates).map(([field, value]) => [columns[field], value]);
     const assignments = entries.map(([field]) => `${field} = ?`).join(', ');
     await d1Query(`UPDATE feedback_submissions SET ${assignments}, updated_at = ? WHERE id = ?`,
@@ -217,6 +254,71 @@ async function updateFeedback(id, updates) {
   if (!feedback) return false;
   Object.assign(feedback, updates, { updatedAt });
   await saveState();
+  return updatedAt;
+}
+
+async function ticketById(id, tokenHash = '') {
+  if (remoteD1Configured) {
+    const sql = tokenHash
+      ? 'SELECT * FROM feedback_submissions WHERE id = ? AND access_token_hash = ? AND deleted_at IS NULL'
+      : 'SELECT * FROM feedback_submissions WHERE id = ? AND deleted_at IS NULL';
+    const result = await d1Query(sql, tokenHash ? [id, tokenHash] : [id]);
+    return result.results?.[0] || null;
+  }
+  const ticket = (state.feedback || []).find((entry) => entry.id === id && !entry.deletedAt);
+  if (!ticket || !tokenHash) return ticket || null;
+  if (!/^[a-f\d]{64}$/.test(ticket.accessTokenHash || '') || !/^[a-f\d]{64}$/.test(tokenHash)) return null;
+  return timingSafeEqual(Buffer.from(ticket.accessTokenHash, 'hex'), Buffer.from(tokenHash, 'hex')) ? ticket : null;
+}
+
+async function ticketMessages(id, ticket) {
+  if (remoteD1Configured) {
+    const result = await d1Query(
+      'SELECT author_type, message, created_at FROM feedback_conversations WHERE feedback_id = ? ORDER BY created_at, id', [id],
+    );
+    return (result.results || []).map((entry) => ({
+      author: entry.author_type, message: entry.message, createdAt: entry.created_at,
+    }));
+  }
+  return ticket.conversation || [];
+}
+
+async function recordTicketActivity(id, action, actorType, createdAt) {
+  if (remoteD1Configured) {
+    await d1Query('INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+      [randomBytes(10).toString('hex'), id, action, actorType, createdAt]);
+    return;
+  }
+  const ticket = (state.feedback || []).find((entry) => entry.id === id);
+  if (!ticket) return;
+  ticket.activity = Array.isArray(ticket.activity) ? ticket.activity : [];
+  ticket.activity.push({ action, actorType, createdAt });
+  await saveState();
+}
+
+async function ticketActivity(id, ticket) {
+  if (remoteD1Configured) {
+    const result = await d1Query(
+      'SELECT action, actor_type, created_at FROM feedback_activity WHERE feedback_id = ? ORDER BY created_at, id', [id],
+    );
+    return result.results || [];
+  }
+  return ticket.activity || [];
+}
+
+async function addTicketMessage(id, authorType, message, status) {
+  const createdAt = new Date().toISOString();
+  if (remoteD1Configured) {
+    await d1Query('INSERT INTO feedback_conversations (id, feedback_id, author_type, message, created_at) VALUES (?, ?, ?, ?, ?)',
+      [randomBytes(10).toString('hex'), id, authorType, message, createdAt]);
+  } else {
+    const ticket = (state.feedback || []).find((entry) => entry.id === id);
+    ticket.conversation = Array.isArray(ticket.conversation) ? ticket.conversation : [];
+    ticket.conversation.push({ author: authorType, message, createdAt });
+  }
+  const updatedAt = await updateFeedback(id, { status });
+  await recordTicketActivity(id, `${authorType}_reply`, authorType, createdAt);
+  if (!remoteD1Configured) await saveState();
   return updatedAt;
 }
 
@@ -889,16 +991,83 @@ async function handleRequest(request, response) {
       return;
     }
     const now = new Date().toISOString();
+    const accessToken = randomBytes(32).toString('hex');
+    if (!remoteD1Configured) await feedbackRows();
     const feedback = {
       id: randomBytes(16).toString('hex'),
+      ticketNumber: await nextTicketNumber(),
+      accessTokenHash: createHash('sha256').update(accessToken).digest('hex'),
       ...validated,
       status: 'new',
+      priority: 'medium',
       adminNotes: '',
+      archivedAt: null,
+      deletedAt: null,
       createdAt: now,
       updatedAt: now,
     };
     await insertFeedback(feedback);
-    sendJson(response, 201, { submitted: true });
+    sendJson(response, 201, { submitted: true, ticketNumber: feedback.ticketNumber, ticketId: feedback.id, accessToken });
+    return;
+  }
+  const ticketMatch = /^\/api\/tickets\/([a-f\d]{32})(?:\/(messages))?$/.exec(pathname);
+  if (ticketMatch) {
+    if (!['GET', 'POST'].includes(request.method)) {
+      sendJson(response, 405, { error: 'Method not allowed.' }, { Allow: 'GET, POST' });
+      return;
+    }
+    if (request.method === 'POST' && (!ticketMatch[2] || !sameOrigin(request))) {
+      sendJson(response, 403, { error: 'Ticket replies require a same-origin messages request.' });
+      return;
+    }
+    await ensureFeedbackSchema();
+    const accessToken = request.headers['x-ticket-access-token'] || '';
+    if (!/^[a-f\d]{64}$/.test(accessToken)) {
+      sendJson(response, 401, { error: 'Ticket access is invalid.' });
+      return;
+    }
+    const [, id] = ticketMatch;
+    const tokenHash = createHash('sha256').update(accessToken).digest('hex');
+    const ticket = await ticketById(id, tokenHash);
+    if (!ticket) {
+      sendJson(response, 404, { error: 'Ticket not found or access is invalid.' });
+      return;
+    }
+    const normalized = remoteD1Configured ? normalizeFeedback(ticket) : {
+      ticketNumber: ticket.ticketNumber,
+      type: ticket.type,
+      gameId: ticket.gameId,
+      status: ({ seen: 'under_review', working: 'in_progress', important: 'under_review', archived: 'closed' })[ticket.status] || ticket.status,
+      priority: ticket.priority || 'medium',
+      createdAt: ticket.createdAt,
+      updatedAt: ticket.updatedAt,
+    };
+    if (request.method === 'GET') {
+      const messages = await ticketMessages(id, ticket);
+      sendJson(response, 200, {
+        ticketNumber: normalized.ticketNumber,
+        type: normalized.type,
+        gameId: normalized.gameId,
+        status: normalized.status,
+        priority: normalized.priority,
+        createdAt: normalized.createdAt,
+        updatedAt: normalized.updatedAt,
+        conversation: [
+          { author: 'user', message: ticket.message, createdAt: normalized.createdAt },
+          ...messages,
+        ],
+      });
+      return;
+    }
+    if (normalized.status === 'closed' || normalized.status === 'rejected' || normalized.status === 'implemented'
+      || ticket.archivedAt || ticket.archived_at) {
+      sendJson(response, 409, { error: 'This ticket is closed to replies.' });
+      return;
+    }
+    const body = await readJson(request);
+    const message = validateConversationMessage(body.message);
+    const updatedAt = await addTicketMessage(id, 'user', message, 'under_review');
+    sendJson(response, 201, { sent: true, status: 'under_review', updatedAt });
     return;
   }
   if (request.method === 'GET' && pathname === '/masterstandalone.html') {
@@ -1145,7 +1314,73 @@ async function handleRequest(request, response) {
       sendJson(response, 200, await feedbackRows());
       return;
     }
-    const feedbackMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})(?:\/(status|notes))?$/.exec(pathname);
+    const conversationMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})\/conversation$/.exec(pathname);
+    if (conversationMatch && request.method === 'GET') {
+      await ensureFeedbackSchema();
+      const [, id] = conversationMatch;
+      const ticket = await ticketById(id);
+      if (!ticket) {
+        sendJson(response, 404, { error: 'Ticket not found.' });
+        return;
+      }
+      const createdAt = remoteD1Configured ? ticket.created_at : ticket.createdAt;
+      const messages = await ticketMessages(id, ticket);
+      sendJson(response, 200, {
+        conversation: [{ author: 'user', message: ticket.message, createdAt }, ...messages],
+        activity: await ticketActivity(id, ticket),
+      });
+      return;
+    }
+    const replyMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})\/reply$/.exec(pathname);
+    if (replyMatch && request.method === 'POST') {
+      await ensureFeedbackSchema();
+      const [, id] = replyMatch;
+      const ticket = await ticketById(id);
+      if (!ticket) {
+        sendJson(response, 404, { error: 'Ticket not found.' });
+        return;
+      }
+      if (!ticket.accessTokenHash && !ticket.access_token_hash) {
+        sendJson(response, 409, { error: 'This legacy inquiry has no user access token.' });
+        return;
+      }
+      const body = await readJson(request);
+      const message = validateConversationMessage(body.message);
+      const updatedAt = await addTicketMessage(id, 'admin', message, 'awaiting_user_reply');
+      sendJson(response, 201, { sent: true, status: 'awaiting_user_reply', updatedAt });
+      return;
+    }
+    const archiveMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})\/(archive|unarchive)$/.exec(pathname);
+    if (archiveMatch && request.method === 'POST') {
+      await ensureFeedbackSchema();
+      const [, id, action] = archiveMatch;
+      const ticket = await ticketById(id);
+      if (!ticket) {
+        sendJson(response, 404, { error: 'Ticket not found.' });
+        return;
+      }
+      const updatedAt = new Date().toISOString();
+      await updateFeedback(id, { archivedAt: action === 'archive' ? updatedAt : null });
+      await recordTicketActivity(id, action, 'admin', updatedAt);
+      sendJson(response, 200, { id, archived: action === 'archive', updatedAt });
+      return;
+    }
+    const deleteMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})$/.exec(pathname);
+    if (deleteMatch && request.method === 'DELETE') {
+      await ensureFeedbackSchema();
+      const [, id] = deleteMatch;
+      const ticket = await ticketById(id);
+      if (!ticket) {
+        sendJson(response, 404, { error: 'Ticket not found.' });
+        return;
+      }
+      const updatedAt = new Date().toISOString();
+      await updateFeedback(id, { deletedAt: updatedAt });
+      await recordTicketActivity(id, 'deleted', 'admin', updatedAt);
+      sendJson(response, 200, { deleted: true, id, updatedAt });
+      return;
+    }
+    const feedbackMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})(?:\/(status|notes|priority))?$/.exec(pathname);
     if (feedbackMatch && request.method === 'PATCH') {
       await ensureFeedbackSchema();
       const [, id, action] = feedbackMatch;
@@ -1158,12 +1393,21 @@ async function handleRequest(request, response) {
       if (action === 'notes') {
         const adminNotes = validateAdminNotes(body.adminNotes);
         const updatedAt = await updateFeedback(id, { adminNotes });
+        await recordTicketActivity(id, 'admin_note_updated', 'admin', updatedAt);
         sendJson(response, 200, { id, adminNotes, updatedAt });
+        return;
+      }
+      if (action === 'priority') {
+        const priority = validateFeedbackPriority(body.priority);
+        const updatedAt = await updateFeedback(id, { priority });
+        await recordTicketActivity(id, `priority_${priority}`, 'admin', updatedAt);
+        sendJson(response, 200, { id, priority, updatedAt });
         return;
       }
       if (!action || action === 'status') {
         const status = validateFeedbackStatus(body.status);
         const updatedAt = await updateFeedback(id, { status });
+        await recordTicketActivity(id, `status_${status}`, 'admin', updatedAt);
         sendJson(response, 200, { id, status, updatedAt });
         return;
       }
@@ -1187,12 +1431,13 @@ async function handleRequest(request, response) {
         );
       } else if (ids.length) {
         for (const id of ids) {
-          const record = records.find((entry) => entry.id === id);
+          const record = (state.feedback || []).find((entry) => entry.id === id);
           record.status = status;
           record.updatedAt = updatedAt;
         }
         await saveState();
       }
+      for (const id of ids) await recordTicketActivity(id, `status_${status}`, 'admin', updatedAt);
       sendJson(response, 200, { updated: ids.length, status });
       return;
     }

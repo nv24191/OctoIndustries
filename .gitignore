@@ -2,3 +2,4 @@
 Zips/
 .cloudflare-dist/
 .octo-data/
+node_modules/

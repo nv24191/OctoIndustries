@@ -2,6 +2,8 @@ import {
   ensureFeedbackSchema,
   normalizeFeedback,
   validateAdminNotes,
+  validateConversationMessage,
+  validateFeedbackPriority,
   validateFeedbackStatus,
   validateFeedbackSubmission,
 } from './feedback.js';
@@ -229,10 +231,71 @@ export async function handleFeedback(request, env) {
   }
   const now = new Date().toISOString();
   const id = randomToken().slice(0, 32);
+  const accessToken = randomToken();
+  const ticketNumber = await env.ADMIN_DB.prepare(
+    'UPDATE feedback_ticket_sequence SET next_number = next_number + 1 WHERE id = 1 RETURNING next_number - 1 AS ticket_number',
+  ).first();
+  if (!Number.isInteger(ticketNumber?.ticket_number)) throw new Error('The ticket number sequence returned an invalid result.');
   await env.ADMIN_DB.prepare(
-    'INSERT INTO feedback_submissions (id, type, game_id, message, device_info, status, admin_notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  ).bind(id, validated.type, validated.gameId, validated.message, JSON.stringify(validated.deviceInfo), 'new', '', now, now).run();
-  return json({ submitted: true }, 201);
+    'INSERT INTO feedback_submissions (id, ticket_number, access_token_hash, type, game_id, message, device_info, status, priority, admin_notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).bind(id, ticketNumber.ticket_number, await digest(accessToken), validated.type, validated.gameId, validated.message,
+    JSON.stringify(validated.deviceInfo), 'new', 'medium', '', now, now).run();
+  await env.ADMIN_DB.prepare(
+    'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).bind(randomToken().slice(0, 20), id, 'created', 'user', now).run();
+  return json({ submitted: true, ticketNumber: ticketNumber.ticket_number, ticketId: id, accessToken }, 201);
+}
+
+export async function handleTickets(request, env) {
+  const url = new URL(request.url);
+  const match = /^\/api\/tickets\/([a-f\d]{32})(?:\/messages)?$/.exec(url.pathname);
+  if (!match) return json({ error: 'Ticket not found.' }, 404);
+  if (!['GET', 'POST'].includes(request.method) || (request.method === 'POST' && !match[0].endsWith('/messages'))) {
+    return json({ error: 'Method not allowed.' }, 405, { Allow: 'GET, POST /messages' });
+  }
+  if (request.method === 'POST' && !sameOrigin(request, url)) return json({ error: 'Cross-origin ticket replies are not allowed.' }, 403);
+  await ensureFeedbackSchema(env.ADMIN_DB);
+  const [, id] = match;
+  const accessToken = request.headers.get('X-Ticket-Access-Token') || '';
+  if (!/^[a-f\d]{64}$/.test(accessToken)) return json({ error: 'Ticket access is invalid.' }, 401);
+  const ticket = await env.ADMIN_DB.prepare(
+    'SELECT id, ticket_number, type, game_id, message, status, priority, created_at, updated_at FROM feedback_submissions WHERE id = ? AND access_token_hash = ? AND deleted_at IS NULL',
+  ).bind(id, await digest(accessToken)).first();
+  if (!ticket) return json({ error: 'Ticket not found or access is invalid.' }, 404);
+  if (request.method === 'GET') {
+    const result = await env.ADMIN_DB.prepare(
+      'SELECT author_type, message, created_at FROM feedback_conversations WHERE feedback_id = ? ORDER BY created_at, id',
+    ).bind(id).all();
+    return json({
+      ticketNumber: ticket.ticket_number,
+      type: ticket.type,
+      gameId: ticket.game_id,
+      status: ticket.status,
+      priority: ticket.priority,
+      createdAt: ticket.created_at,
+      updatedAt: ticket.updated_at,
+      conversation: [
+        { author: 'user', message: ticket.message, createdAt: ticket.created_at },
+        ...(result.results || []).map((entry) => ({ author: entry.author_type, message: entry.message, createdAt: entry.created_at })),
+      ],
+    });
+  }
+  if (ticket.status === 'closed' || ticket.status === 'rejected' || ticket.status === 'implemented') {
+    return json({ error: 'This ticket is closed to replies.' }, 409);
+  }
+  const body = await bodyJson(request);
+  const message = validateConversationMessage(body.message);
+  const now = new Date().toISOString();
+  await env.ADMIN_DB.prepare(
+    'INSERT INTO feedback_conversations (id, feedback_id, author_type, message, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).bind(randomToken().slice(0, 20), id, 'user', message, now).run();
+  await env.ADMIN_DB.prepare(
+    'UPDATE feedback_submissions SET status = ?, updated_at = ? WHERE id = ?',
+  ).bind('under_review', now, id).run();
+  await env.ADMIN_DB.prepare(
+    'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).bind(randomToken().slice(0, 20), id, 'user_reply', 'user', now).run();
+  return json({ sent: true, status: 'under_review', updatedAt: now }, 201);
 }
 
 async function login(request, env, url) {
@@ -492,10 +555,72 @@ export async function handleAdmin(request, env) {
     });
   }
   if (path === '/api/admin/feedback' && request.method === 'GET') {
-    const result = await env.ADMIN_DB.prepare('SELECT * FROM feedback_submissions ORDER BY created_at DESC').all();
+    const result = await env.ADMIN_DB.prepare('SELECT * FROM feedback_submissions WHERE deleted_at IS NULL ORDER BY created_at DESC').all();
     return json((result.results || []).map(normalizeFeedback));
   }
-  const feedbackMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})(?:\/(status|notes))?$/.exec(path);
+  const conversationMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})\/conversation$/.exec(path);
+  if (conversationMatch && request.method === 'GET') {
+    const [, id] = conversationMatch;
+    const ticket = await env.ADMIN_DB.prepare('SELECT * FROM feedback_submissions WHERE id = ?').bind(id).first();
+    if (!ticket) return json({ error: 'Ticket not found.' }, 404);
+    const [messages, activityLog] = await Promise.all([
+      env.ADMIN_DB.prepare('SELECT author_type, message, created_at FROM feedback_conversations WHERE feedback_id = ? ORDER BY created_at, id').bind(id).all(),
+      env.ADMIN_DB.prepare('SELECT action, actor_type, created_at FROM feedback_activity WHERE feedback_id = ? ORDER BY created_at, id').bind(id).all(),
+    ]);
+    return json({
+      conversation: [
+        { author: 'user', message: ticket.message, createdAt: ticket.created_at },
+        ...(messages.results || []).map((entry) => ({ author: entry.author_type, message: entry.message, createdAt: entry.created_at })),
+      ],
+      activity: activityLog.results || [],
+    });
+  }
+  const replyMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})\/reply$/.exec(path);
+  if (replyMatch && request.method === 'POST') {
+    const [, id] = replyMatch;
+    const ticket = await env.ADMIN_DB.prepare('SELECT id, access_token_hash FROM feedback_submissions WHERE id = ? AND deleted_at IS NULL').bind(id).first();
+    if (!ticket) return json({ error: 'Ticket not found.' }, 404);
+    if (!ticket.access_token_hash) return json({ error: 'This legacy inquiry has no user access token.' }, 409);
+    const message = validateConversationMessage((await bodyJson(request)).message);
+    const updatedAt = new Date().toISOString();
+    await env.ADMIN_DB.prepare(
+      'INSERT INTO feedback_conversations (id, feedback_id, author_type, message, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(randomToken().slice(0, 20), id, 'admin', message, updatedAt).run();
+    await env.ADMIN_DB.prepare('UPDATE feedback_submissions SET status = ?, updated_at = ? WHERE id = ?')
+      .bind('awaiting_user_reply', updatedAt, id).run();
+    await env.ADMIN_DB.prepare(
+      'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(randomToken().slice(0, 20), id, 'admin_reply', 'admin', updatedAt).run();
+    return json({ sent: true, status: 'awaiting_user_reply', updatedAt }, 201);
+  }
+  const lifecycleMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})\/(archive|unarchive)$/.exec(path);
+  if (lifecycleMatch && request.method === 'POST') {
+    const [, id, action] = lifecycleMatch;
+    const ticket = await env.ADMIN_DB.prepare('SELECT id FROM feedback_submissions WHERE id = ? AND deleted_at IS NULL').bind(id).first();
+    if (!ticket) return json({ error: 'Ticket not found.' }, 404);
+    const updatedAt = new Date().toISOString();
+    const archivedAt = action === 'archive' ? updatedAt : null;
+    await env.ADMIN_DB.prepare('UPDATE feedback_submissions SET archived_at = ?, updated_at = ? WHERE id = ?')
+      .bind(archivedAt, updatedAt, id).run();
+    await env.ADMIN_DB.prepare(
+      'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(randomToken().slice(0, 20), id, action, 'admin', updatedAt).run();
+    return json({ id, archived: action === 'archive', updatedAt });
+  }
+  const feedbackDeleteMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})$/.exec(path);
+  if (feedbackDeleteMatch && request.method === 'DELETE') {
+    const [, id] = feedbackDeleteMatch;
+    const ticket = await env.ADMIN_DB.prepare('SELECT id FROM feedback_submissions WHERE id = ? AND deleted_at IS NULL').bind(id).first();
+    if (!ticket) return json({ error: 'Ticket not found.' }, 404);
+    const updatedAt = new Date().toISOString();
+    await env.ADMIN_DB.prepare('UPDATE feedback_submissions SET deleted_at = ?, updated_at = ? WHERE id = ?')
+      .bind(updatedAt, updatedAt, id).run();
+    await env.ADMIN_DB.prepare(
+      'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(randomToken().slice(0, 20), id, 'deleted', 'admin', updatedAt).run();
+    return json({ deleted: true, id, updatedAt });
+  }
+  const feedbackMatch = /^\/api\/admin\/feedback\/([a-f\d]{32})(?:\/(status|notes|priority))?$/.exec(path);
   if (feedbackMatch && request.method === 'PATCH') {
     const [, id, action] = feedbackMatch;
     const existing = await env.ADMIN_DB.prepare('SELECT id FROM feedback_submissions WHERE id = ?').bind(id).first();
@@ -508,10 +633,23 @@ export async function handleAdmin(request, env) {
         .bind(notes, updatedAt, id).run();
       return json({ id, adminNotes: notes, updatedAt });
     }
+    if (action === 'priority') {
+      const priority = validateFeedbackPriority(body.priority);
+      const updatedAt = new Date().toISOString();
+      await env.ADMIN_DB.prepare('UPDATE feedback_submissions SET priority = ?, updated_at = ? WHERE id = ?')
+        .bind(priority, updatedAt, id).run();
+      await env.ADMIN_DB.prepare(
+        'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+      ).bind(randomToken().slice(0, 20), id, `priority_${priority}`, 'admin', updatedAt).run();
+      return json({ id, priority, updatedAt });
+    }
     const status = validateFeedbackStatus(body.status);
     const updatedAt = new Date().toISOString();
     await env.ADMIN_DB.prepare('UPDATE feedback_submissions SET status = ?, updated_at = ? WHERE id = ?')
       .bind(status, updatedAt, id).run();
+    await env.ADMIN_DB.prepare(
+      'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(randomToken().slice(0, 20), id, `status_${status}`, 'admin', updatedAt).run();
     return json({ id, status, updatedAt });
   }
   if (path === '/api/admin/feedback/bulk' && request.method === 'POST') {
@@ -522,10 +660,21 @@ export async function handleAdmin(request, env) {
     }
     const status = validateFeedbackStatus(body.status);
     const ids = [...new Set(body.ids)];
+    const matching = await env.ADMIN_DB.prepare(
+      `SELECT id FROM feedback_submissions WHERE deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})`,
+    ).bind(...ids).all();
+    const matchingIds = (matching.results || []).map((entry) => entry.id);
+    if (!matchingIds.length) return json({ updated: 0, status });
+    const updatedAt = new Date().toISOString();
     await env.ADMIN_DB.prepare(
-      `UPDATE feedback_submissions SET status = ?, updated_at = ? WHERE id IN (${ids.map(() => '?').join(',')})`,
-    ).bind(status, new Date().toISOString(), ...ids).run();
-    return json({ updated: ids.length, status });
+      `UPDATE feedback_submissions SET status = ?, updated_at = ? WHERE id IN (${matchingIds.map(() => '?').join(',')})`,
+    ).bind(status, updatedAt, ...matchingIds).run();
+    for (const id of matchingIds) {
+      await env.ADMIN_DB.prepare(
+        'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
+      ).bind(randomToken().slice(0, 20), id, `status_${status}`, 'admin', updatedAt).run();
+    }
+    return json({ updated: matchingIds.length, status });
   }
   if (path === '/api/admin/chat' && request.method === 'POST') return chat(request, env, state);
   if (path === '/api/admin/analyze' && request.method === 'POST') {

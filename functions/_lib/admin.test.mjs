@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pbkdf2Sync, randomBytes, webcrypto } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { handleAdmin, handleCatalog, handleFeedback, handleRoadmap } from './admin.js';
+import { handleAdmin, handleCatalog, handleFeedback, handleRoadmap, handleTickets } from './admin.js';
 import { onRequest as serveCompressedAsset } from '../Octo-Industries/Red-Ball-4/Build/[[path]].js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -21,6 +21,9 @@ class MemoryDatabase {
     this.rateLimits = new Map();
     this.feedbackRateLimits = new Map();
     this.feedback = new Map();
+    this.conversations = new Map();
+    this.ticketActivity = [];
+    this.nextTicketNumber = 1001;
     this.schemaInitializationCalls = 0;
   }
 
@@ -52,6 +55,16 @@ class MemoryStatement {
     if (sql.startsWith("SELECT COUNT(*) AS count FROM feedback_submissions")) {
       return { count: [...database.feedback.values()].filter((entry) => entry.status === 'new').length };
     }
+    if (sql.startsWith('UPDATE feedback_ticket_sequence')) return { ticket_number: database.nextTicketNumber++ };
+    if (sql.startsWith('SELECT id, ticket_number, type, game_id, message, status, priority, created_at, updated_at FROM feedback_submissions')) {
+      const ticket = database.feedback.get(values[0]);
+      return ticket?.access_token_hash === values[1] && !ticket.deleted_at ? ticket : null;
+    }
+    if (sql.startsWith('SELECT id, access_token_hash FROM feedback_submissions')) {
+      const ticket = database.feedback.get(values[0]);
+      return ticket && !ticket.deleted_at ? { id: ticket.id, access_token_hash: ticket.access_token_hash } : null;
+    }
+    if (sql.startsWith('SELECT * FROM feedback_submissions WHERE id = ?')) return database.feedback.get(values[0]) || null;
     if (sql.startsWith('SELECT id FROM feedback_submissions')) return database.feedback.has(values[0]) ? { id: values[0] } : null;
     if (sql.startsWith('INSERT INTO feedback_rate_limits')) {
       const [key, now, windowStart] = values;
@@ -77,8 +90,21 @@ class MemoryStatement {
   }
 
   async all() {
+    if (this.sql.startsWith('SELECT id FROM feedback_submissions WHERE deleted_at IS NULL')) {
+      return { results: this.values.filter((id) => this.database.feedback.has(id)
+        && !this.database.feedback.get(id).deleted_at).map((id) => ({ id })) };
+    }
     if (this.sql.startsWith('SELECT * FROM feedback_submissions')) {
-      return { results: [...this.database.feedback.values()] };
+      const results = [...this.database.feedback.values()];
+      return { results: this.sql.includes('deleted_at IS NULL') ? results.filter((entry) => !entry.deleted_at) : results };
+    }
+    if (this.sql.startsWith('SELECT author_type, message, created_at FROM feedback_conversations')) {
+      return { results: this.database.conversations.get(this.values[0]) || [] };
+    }
+    if (this.sql.startsWith('SELECT action, actor_type, created_at FROM feedback_activity')) {
+      return { results: this.database.ticketActivity.filter((entry) => entry[1] === this.values[0]).map((entry) => ({
+        action: entry[2], actor_type: entry[3], created_at: entry[4],
+      })) };
     }
     throw new Error(`Unexpected all() query in test: ${this.sql}`);
   }
@@ -87,6 +113,9 @@ class MemoryStatement {
     const { database, sql, values } = this;
     if (sql.startsWith('CREATE TABLE IF NOT EXISTS') || sql.startsWith('CREATE INDEX IF NOT EXISTS')) {
       database.schemaInitializationCalls += 1;
+    } else if (sql.startsWith('INSERT OR IGNORE INTO feedback_ticket_sequence')) {
+      database.schemaInitializationCalls += 1;
+      database.nextTicketNumber = Math.max(1001, ...[...database.feedback.values()].map((entry) => (entry.ticket_number || 1000) + 1));
       return { success: true };
     } else if (sql.startsWith('INSERT OR IGNORE INTO admin_state')) {
       database.state ??= values[0];
@@ -115,8 +144,15 @@ class MemoryStatement {
         key: values[0], window_start: values[1], attempts: values[2], blocked_until: values[3],
       });
     } else if (sql.startsWith('INSERT INTO feedback_submissions')) {
-      const [id, type, game_id, message, device_info, status, admin_notes, created_at, updated_at] = values;
-      database.feedback.set(id, { id, type, game_id, message, device_info, status, admin_notes, created_at, updated_at });
+      const [id, ticket_number, access_token_hash, type, game_id, message, device_info, status, priority, admin_notes, created_at, updated_at] = values;
+      database.feedback.set(id, { id, ticket_number, access_token_hash, type, game_id, message, device_info, status, priority, admin_notes, created_at, updated_at });
+    } else if (sql.startsWith('INSERT INTO feedback_conversations')) {
+      const [, feedback_id, author_type, message, created_at] = values;
+      const conversations = database.conversations.get(feedback_id) || [];
+      conversations.push({ author_type, message, created_at });
+      database.conversations.set(feedback_id, conversations);
+    } else if (sql.startsWith('INSERT INTO feedback_activity')) {
+      database.ticketActivity.push(values);
     } else if (sql.startsWith('UPDATE feedback_submissions SET admin_notes')) {
       const [admin_notes, updated_at, id] = values;
       Object.assign(database.feedback.get(id), { admin_notes, updated_at });
@@ -126,6 +162,15 @@ class MemoryStatement {
     } else if (sql.startsWith('UPDATE feedback_submissions SET status')) {
       const [status, updated_at, id] = values;
       Object.assign(database.feedback.get(id), { status, updated_at });
+    } else if (sql.startsWith('UPDATE feedback_submissions SET priority')) {
+      const [priority, updated_at, id] = values;
+      Object.assign(database.feedback.get(id), { priority, updated_at });
+    } else if (sql.startsWith('UPDATE feedback_submissions SET archived_at')) {
+      const [archived_at, updated_at, id] = values;
+      Object.assign(database.feedback.get(id), { archived_at, updated_at });
+    } else if (sql.startsWith('UPDATE feedback_submissions SET deleted_at')) {
+      const [deleted_at, updated_at, id] = values;
+      Object.assign(database.feedback.get(id), { deleted_at, updated_at });
     } else {
       throw new Error(`Unexpected run() query in test: ${sql}`);
     }
@@ -194,7 +239,33 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
     body: JSON.stringify({ type: 'suggestion', message: 'Add a new puzzle game.', deviceInfo: { browser: 'Firefox', userAgent: 'do not store' } }),
   }), env);
   assert.equal(publicSubmission.status, 201);
-  assert.equal(env.ADMIN_DB.schemaInitializationCalls, 4);
+  const ticketCredentials = await publicSubmission.json();
+  assert.equal(ticketCredentials.ticketNumber, 1001);
+  assert.match(ticketCredentials.accessToken, /^[a-f\d]{64}$/);
+  const publicTicketResponse = await handleTickets(new Request(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}`, {
+    headers: { 'X-Ticket-Access-Token': ticketCredentials.accessToken },
+  }), env);
+  assert.equal(publicTicketResponse.status, 200);
+  const publicTicket = await publicTicketResponse.json();
+  assert.equal(publicTicket.ticketNumber, 1001);
+  assert.equal(publicTicket.conversation[0].message, 'Add a new puzzle game.');
+  assert.equal('adminNotes' in publicTicket, false);
+  assert.equal('deviceInfo' in publicTicket, false);
+  const userReply = await handleTickets(new Request(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}/messages`, {
+    method: 'POST',
+    headers: { Origin: baseUrl, 'X-Ticket-Access-Token': ticketCredentials.accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'Any update on this idea?' }),
+  }), env);
+  assert.equal(userReply.status, 201);
+  const ticketAfterReply = await handleTickets(new Request(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}`, {
+    headers: { 'X-Ticket-Access-Token': ticketCredentials.accessToken },
+  }), env);
+  assert.equal((await ticketAfterReply.json()).conversation.length, 2);
+  const invalidTicketAccess = await handleTickets(new Request(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}`, {
+    headers: { 'X-Ticket-Access-Token': '0'.repeat(64) },
+  }), env);
+  assert.equal(invalidTicketAccess.status, 404);
+  assert.equal(env.ADMIN_DB.schemaInitializationCalls, 10);
   const crossOriginSubmission = await handleFeedback(new Request(`${baseUrl}/api/feedback`, {
     method: 'POST',
     headers: { Origin: 'https://other.example', 'Content-Type': 'application/json' },
@@ -235,8 +306,25 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
   assert.equal(dashboardResponse.status, 200);
   const dashboard = await dashboardResponse.json();
   assert.ok(dashboard.counts.total > 0);
-  assert.equal(dashboard.counts.newFeedback, 1);
+  assert.equal(dashboard.counts.newFeedback, 0);
   assert.ok(dashboard.roadmap.length > 0);
+  const legacyTicketId = 'e'.repeat(32);
+  env.ADMIN_DB.feedback.set(legacyTicketId, {
+    id: legacyTicketId, ticket_number: 900, access_token_hash: null, type: 'issue', game_id: null,
+    message: 'Legacy inquiry', device_info: '{}', status: 'new', priority: 'medium', admin_notes: '',
+    created_at: '2024-01-01T00:00:00.000Z', updated_at: '2024-01-01T00:00:00.000Z',
+  });
+  const legacyHistory = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${legacyTicketId}/conversation`, {
+    headers: { Cookie: cookie },
+  }), env);
+  assert.equal(legacyHistory.status, 200);
+  const legacyReply = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${legacyTicketId}/reply`, {
+    method: 'POST',
+    headers: { Cookie: cookie, Origin: baseUrl, 'X-CSRF-Token': csrfToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'Reply cannot be delivered.' }),
+  }), env);
+  assert.equal(legacyReply.status, 409);
+  env.ADMIN_DB.feedback.delete(legacyTicketId);
   assert.equal((await handleAdmin(new Request(`${baseUrl}/api/admin/roadmap`), env)).status, 401);
   const publicRoadmapResponse = await handleRoadmap(new Request(`${baseUrl}/api/roadmap`), env);
   assert.equal(publicRoadmapResponse.status, 200);
@@ -286,16 +374,17 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
   assert.equal(issueSubmission.status, 201);
   const inbox = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback`, { headers: { Cookie: cookie } }), env);
   assert.equal(inbox.status, 200);
-  assert.equal(env.ADMIN_DB.schemaInitializationCalls, 4);
+  assert.equal(env.ADMIN_DB.schemaInitializationCalls, 10);
   const submissions = await inbox.json();
   assert.equal(submissions.length, 2);
-  assert.ok(submissions.every((entry) => entry.status === 'new'));
+  assert.equal(submissions.find((entry) => entry.type === 'issue').status, 'new');
+  assert.equal(submissions.find((entry) => entry.type === 'suggestion').status, 'under_review');
   assert.equal(submissions.find((entry) => entry.type === 'issue').gameId, game.id);
   assert.equal(submissions.find((entry) => entry.type === 'suggestion').deviceInfo.userAgent, undefined);
   const statusUpdate = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${submissions[0].id}/status`, {
     method: 'PATCH',
     headers: { Cookie: cookie, Origin: baseUrl, 'X-CSRF-Token': csrfToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'seen' }),
+    body: JSON.stringify({ status: 'under_review' }),
   }), env);
   assert.equal(statusUpdate.status, 200);
   const notesUpdate = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${submissions[0].id}/notes`, {
@@ -304,14 +393,58 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
     body: JSON.stringify({ adminNotes: 'Retest the report.' }),
   }), env);
   assert.equal(notesUpdate.status, 200);
+  assert.notEqual(env.ADMIN_DB.feedback.get(ticketCredentials.ticketId).access_token_hash, ticketCredentials.accessToken);
+  const userTicketAfterPrivateNote = await handleTickets(new Request(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}`, {
+    headers: { 'X-Ticket-Access-Token': ticketCredentials.accessToken },
+  }), env);
+  const publicTicketAfterPrivateNote = await userTicketAfterPrivateNote.json();
+  assert.equal('adminNotes' in publicTicketAfterPrivateNote, false);
+  assert.equal('deviceInfo' in publicTicketAfterPrivateNote, false);
+  const adminConversationResponse = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${ticketCredentials.ticketId}/conversation`, {
+    headers: { Cookie: cookie },
+  }), env);
+  assert.equal(adminConversationResponse.status, 200);
+  assert.equal((await adminConversationResponse.json()).conversation.length, 2);
+  const adminReplyResponse = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${ticketCredentials.ticketId}/reply`, {
+    method: 'POST',
+    headers: { Cookie: cookie, Origin: baseUrl, 'X-CSRF-Token': csrfToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'We have added this to review.' }),
+  }), env);
+  assert.equal(adminReplyResponse.status, 201);
+  const priorityUpdate = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${ticketCredentials.ticketId}/priority`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, Origin: baseUrl, 'X-CSRF-Token': csrfToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ priority: 'critical' }),
+  }), env);
+  assert.equal(priorityUpdate.status, 200);
+  const archiveTicket = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${ticketCredentials.ticketId}/archive`, {
+    method: 'POST', headers: { Cookie: cookie, Origin: baseUrl, 'X-CSRF-Token': csrfToken }, body: '{}',
+  }), env);
+  assert.equal((await archiveTicket.json()).archived, true);
+  const unarchiveTicket = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${ticketCredentials.ticketId}/unarchive`, {
+    method: 'POST', headers: { Cookie: cookie, Origin: baseUrl, 'X-CSRF-Token': csrfToken }, body: '{}',
+  }), env);
+  assert.equal((await unarchiveTicket.json()).archived, false);
   const bulkUpdate = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/bulk`, {
     method: 'POST',
     headers: { Cookie: cookie, Origin: baseUrl, 'X-CSRF-Token': csrfToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids: submissions.map((entry) => entry.id), status: 'archived' }),
+    body: JSON.stringify({ ids: submissions.map((entry) => entry.id), status: 'closed' }),
   }), env);
   assert.equal(bulkUpdate.status, 200);
   const finalInbox = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback`, { headers: { Cookie: cookie } }), env);
-  assert.ok((await finalInbox.json()).every((entry) => entry.status === 'archived'));
+  assert.ok((await finalInbox.json()).every((entry) => entry.status === 'closed'));
+  const finalConversation = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${ticketCredentials.ticketId}/conversation`, {
+    headers: { Cookie: cookie },
+  }), env);
+  assert.ok((await finalConversation.json()).activity.some((entry) => entry.action === 'status_closed'));
+  const deleteTicket = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${ticketCredentials.ticketId}`, {
+    method: 'DELETE', headers: { Cookie: cookie, Origin: baseUrl, 'X-CSRF-Token': csrfToken },
+  }), env);
+  assert.equal(deleteTicket.status, 200);
+  const deletedTicketAccess = await handleTickets(new Request(`${baseUrl}/api/tickets/${ticketCredentials.ticketId}`, {
+    headers: { 'X-Ticket-Access-Token': ticketCredentials.accessToken },
+  }), env);
+  assert.equal(deletedTicketAccess.status, 404);
 
   const editUrl = `${baseUrl}/api/admin/games/${game.id}`;
   const invalidEdit = await handleAdmin(new Request(editUrl, {

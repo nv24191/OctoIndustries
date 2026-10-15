@@ -57,7 +57,10 @@ async function copyTree(sourceDirectory, outputDirectory) {
       await copyTree(source, destination);
       continue;
     }
-    if (!entry.isFile() || excludedFiles.has(entry.name) || omittedPaths.has(pathFromRoot)) continue;
+    if (!entry.isFile()
+      || excludedFiles.has(entry.name)
+      || omittedPaths.has(pathFromRoot)
+      || /\.(?:apk|xapk|aab|apks|obb)$/i.test(entry.name)) continue;
     const fileInfo = await stat(source);
     if (fileInfo.size <= maximumAssetBytes) {
       await copyFile(source, destination);

@@ -4,5 +4,9 @@
   "type": "module",
   "scripts": {
     "pages:build": "node scripts/build-cloudflare-site.mjs"
+  },
+  "dependencies": {
+    "esbuild": "0.28.2",
+    "phaser": "4.2.1"
   }
 }

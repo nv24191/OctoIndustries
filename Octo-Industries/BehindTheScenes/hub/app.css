@@ -889,6 +889,30 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
 .feedback-form :is(select, textarea):focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .feedback-privacy, .feedback-status { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .feedback-status { color: var(--cyan); }
+.ticket-portal { margin-top: 30px; padding-top: 22px; border-top: 1px solid rgba(191, 221, 232, .14); }
+.ticket-portal .section-heading { align-items: center; }
+.ticket-portal .section-heading h2 { margin: 0; font-family: var(--display); font-size: 24px; }
+.ticket-portal-note, .ticket-empty, .ticket-updated, .ticket-closed-note { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.my-tickets-list { display: grid; gap: 12px; margin-top: 14px; }
+.ticket-card { display: grid; min-width: 0; gap: 12px; padding: 14px; border: 1px solid rgba(101, 230, 227, .2); border-radius: 7px; background: rgba(7, 16, 25, .62); }
+.ticket-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ticket-card-header .eyebrow { margin-bottom: 4px; }
+.ticket-card h3 { margin: 0; font-family: var(--display); font-size: 19px; }
+.ticket-status { flex: 0 0 auto; padding: 7px 9px; border: 1px solid rgba(101, 230, 227, .28); color: var(--cyan); font-size: 10px; font-weight: 700; }
+.ticket-updated { margin: -5px 0 0; }
+.ticket-conversation { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.ticket-message { min-width: 0; padding: 10px; border-left: 2px solid rgba(101, 230, 227, .62); background: rgba(22, 43, 53, .42); }
+.ticket-message[data-author="admin"] { border-left-color: rgba(242, 139, 135, .8); }
+.ticket-message > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; }
+.ticket-message strong { color: var(--paper); font-size: 11px; }
+.ticket-message time { color: var(--muted); font-size: 9px; }
+.ticket-message p { margin: 7px 0 0; color: #d7e3e5; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ticket-reply-form { display: grid; gap: 8px; }
+.ticket-reply-form label { color: var(--paper); font-size: 11px; font-weight: 700; }
+.ticket-reply-form textarea { width: 100%; min-height: 90px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: #071019; color: var(--paper); font: inherit; resize: vertical; }
+.ticket-reply-form textarea:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.ticket-reply-form .button { min-height: 44px; justify-self: start; }
+.ticket-reply-status { min-height: 1em; margin: 0; color: var(--cyan); font-size: 10px; }
 .feedback-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 4px; }
 .footer-feedback-link { padding: 8px; border: 0; background: transparent; color: #91a7af; cursor: pointer; font-size: 8px; font-weight: 700; }
 .footer-feedback-link:hover { color: var(--cyan); }

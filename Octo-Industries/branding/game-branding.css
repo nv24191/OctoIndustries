@@ -93,7 +93,7 @@ body[data-octo-home-corner='bottom-right'] .octo-game-brand {
   bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
   width: clamp(42px, 4.6vw, 64px);
   height: clamp(42px, 4.6vw, 64px);
-  opacity: .15;
+  opacity: var(--octo-watermark-opacity, .15);
 }
 
 body[data-octo-watermark-corner='top-left'] .octo-game-watermark {

@@ -872,30 +872,127 @@ function bindEvents() {
 function browserDeviceInfo() {
   const ua = navigator.userAgent || '';
   const platform = navigator.userAgentData?.platform || navigator.platform || '';
+  const platformAndAgent = `${platform} ${ua}`;
+  const ipad = /iPad/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
   const deviceType = navigator.userAgentData?.mobile
     ? 'Mobile'
-    : /iPad|Tablet/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
+    : ipad || /Tablet/i.test(ua)
       ? 'Tablet'
       : 'Desktop';
-  const operatingSystem = /Windows/i.test(platform + ua) ? 'Windows'
-    : /Android/i.test(platform + ua) ? 'Android'
-      : /iPhone|iPad|iPod|iOS/i.test(platform + ua) ? 'iOS'
-        : /Mac OS|Macintosh/i.test(platform + ua) ? 'macOS'
-          : /Linux/i.test(platform + ua) ? 'Linux' : 'Unknown';
-  const browser = /Edg\//.test(ua) ? 'Edge'
-    : /OPR\//.test(ua) ? 'Opera'
+  const operatingSystem = /Windows/i.test(platformAndAgent) ? 'Windows'
+    : /Android/i.test(platformAndAgent) ? 'Android'
+      : /iPhone|iPad|iPod|iOS/i.test(platformAndAgent) || ipad ? 'iOS'
+        : /Mac OS|Macintosh/i.test(platformAndAgent) ? 'macOS'
+          : /Linux/i.test(platformAndAgent) ? 'Linux' : 'Unknown';
+  const browserVersion = ua.match(/(?:Edg(?:e|A|iOS)?|OPR|OPiOS|SamsungBrowser|FxiOS|Firefox|CriOS|Chrome|Version)\/([\d.]+)/);
+  const browser = /Edg(?:e|A|iOS)?\//.test(ua) ? 'Edge'
+    : /OPR\/|OPiOS\//.test(ua) ? 'Opera'
       : /SamsungBrowser\//.test(ua) ? 'Samsung Internet'
-        : /Firefox\//.test(ua) ? 'Firefox'
-          : /Chrome\//.test(ua) ? 'Chrome'
-            : /Safari\//.test(ua) ? 'Safari' : 'Unknown';
+        : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox'
+          : /Chrome\/|CriOS\//.test(ua) ? 'Chrome'
+            : /Version\/.*Safari\//.test(ua) ? 'Safari' : 'Unknown';
+  const osVersion = operatingSystem === 'Windows' ? ua.match(/Windows NT ([\d.]+)/)?.[1]
+    : operatingSystem === 'Android' ? ua.match(/Android ([\d.]+)/)?.[1]
+      : operatingSystem === 'iOS' ? ua.match(/(?:CPU )?OS ([\d_]+)/)?.[1]?.replaceAll('_', '.')
+        : operatingSystem === 'macOS' ? ua.match(/Mac OS X ([\d_]+)/)?.[1]?.replaceAll('_', '.') : '';
+  const deviceName = navigator.userAgentData?.model || (ipad ? 'iPad'
+    : /iPhone/i.test(ua) ? 'iPhone'
+      : /iPod/i.test(ua) ? 'iPod'
+        : operatingSystem === 'Android' ? 'Android device'
+          : operatingSystem === 'macOS' ? 'Mac'
+            : operatingSystem === 'Windows' ? 'Windows PC'
+              : operatingSystem === 'Linux' ? 'Linux device' : 'Unknown device');
   return {
     deviceType,
+    deviceName,
     operatingSystem,
+    operatingSystemVersion: osVersion || '',
     browser,
+    browserVersion: browserVersion?.[1] || '',
     screenResolution: Number.isFinite(screen.width) && Number.isFinite(screen.height)
       ? `${screen.width} × ${screen.height}` : '',
+    language: navigator.languages?.join(', ').slice(0, 100) || navigator.language || '',
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
     octoVersion: document.querySelector('meta[name="octo-version"]')?.content || window.OCTO_BUILD_VERSION || '',
   };
+}
+
+const ticketStatuses = {
+  new: 'New', under_review: 'Under Review', planned: 'Planned', in_progress: 'In Progress',
+  awaiting_user_reply: 'Awaiting User Reply', implemented: 'Implemented', resolved: 'Resolved',
+  rejected: 'Rejected', closed: 'Closed',
+};
+
+function savedTicketCredentials() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('octo-industries.tickets') || '[]');
+    return Array.isArray(stored) ? stored.filter((ticket) => /^[a-f\d]{32}$/.test(ticket.ticketId || '')
+      && /^[a-f\d]{64}$/.test(ticket.accessToken || '') && Number.isInteger(ticket.ticketNumber)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTicketCredentials(ticket) {
+  try {
+    const existing = savedTicketCredentials().filter((entry) => entry.ticketId !== ticket.ticketId);
+    localStorage.setItem('octo-industries.tickets', JSON.stringify([ticket, ...existing].slice(0, 50)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatTicketDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Unknown time' : new Intl.DateTimeFormat('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    timeZone: 'Asia/Bahrain', timeZoneName: 'short',
+  }).format(date);
+}
+
+async function loadMyTickets() {
+  const container = document.querySelector('#my-tickets-list');
+  const credentials = savedTicketCredentials();
+  if (!credentials.length) {
+    container.innerHTML = '<p class="ticket-empty">No saved tickets yet.</p>';
+    return;
+  }
+  container.innerHTML = '<p class="ticket-empty">Loading tickets…</p>';
+  const results = await Promise.all(credentials.map(async (credential) => {
+    try {
+      const response = await fetch(`/api/tickets/${encodeURIComponent(credential.ticketId)}`, {
+        headers: { 'X-Ticket-Access-Token': credential.accessToken, Accept: 'application/json' },
+        credentials: 'same-origin', cache: 'no-store',
+      });
+      const ticket = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(ticket?.error || 'Ticket is unavailable.');
+      return { credential, ticket };
+    } catch (error) {
+      return { credential, error };
+    }
+  }));
+  container.innerHTML = results.map(({ credential, ticket, error }) => {
+    if (error) return `<article class="ticket-card"><h3>Ticket #${credential.ticketNumber}</h3><p class="ticket-empty">${escapeHtml(error.message)}</p></article>`;
+    const conversation = ticket.conversation.map((entry) => `<li class="ticket-message" data-author="${entry.author === 'admin' ? 'admin' : 'user'}">
+      <div><strong>${entry.author === 'admin' ? 'Octo Industries' : 'You'}</strong><time>${escapeHtml(formatTicketDate(entry.createdAt))}</time></div>
+      <p>${escapeHtml(entry.message)}</p>
+    </li>`).join('');
+    const status = ticketStatuses[ticket.status] || 'Under Review';
+    const canReply = !['closed', 'rejected', 'implemented'].includes(ticket.status);
+    return `<article class="ticket-card">
+      <header class="ticket-card-header"><div><p class="eyebrow">${escapeHtml(ticket.type.toUpperCase())}</p><h3>Ticket #${credential.ticketNumber}</h3></div>
+        <span class="ticket-status" data-status="${escapeHtml(ticket.status)}">${escapeHtml(status)}</span></header>
+      <p class="ticket-updated">Updated ${escapeHtml(formatTicketDate(ticket.updatedAt))}</p>
+      <ol class="ticket-conversation">${conversation}</ol>
+      ${canReply ? `<form class="ticket-reply-form" data-ticket-reply="${escapeHtml(credential.ticketId)}">
+        <label for="ticket-reply-${escapeHtml(credential.ticketId)}">Reply</label>
+        <textarea id="ticket-reply-${escapeHtml(credential.ticketId)}" name="message" maxlength="5000" rows="3" required></textarea>
+        <button class="button button-secondary" type="submit">Send Reply</button>
+        <p class="ticket-reply-status" data-ticket-reply-status role="status" aria-live="polite"></p>
+      </form>` : '<p class="ticket-closed-note">This ticket is closed to replies.</p>'}
+    </article>`;
+  }).join('');
 }
 
 function bindFeedbackForm() {
@@ -923,6 +1020,42 @@ function bindFeedbackForm() {
   }));
   document.querySelector('#feedback-close').addEventListener('click', () => dialog.close());
   document.querySelector('#feedback-cancel').addEventListener('click', () => dialog.close());
+  document.querySelector('#my-tickets-refresh').addEventListener('click', () => loadMyTickets());
+  document.querySelector('#my-tickets-list').addEventListener('submit', async (event) => {
+    const replyForm = event.target.closest('[data-ticket-reply]');
+    if (!replyForm) return;
+    event.preventDefault();
+    const ticketId = replyForm.dataset.ticketReply;
+    const credential = savedTicketCredentials().find((entry) => entry.ticketId === ticketId);
+    const message = replyForm.elements.message.value;
+    const submit = replyForm.querySelector('button[type="submit"]');
+    const responseStatus = replyForm.querySelector('[data-ticket-reply-status]');
+    if (!credential) {
+      responseStatus.textContent = 'Ticket access is unavailable in this browser.';
+      return;
+    }
+    submit.disabled = true;
+    responseStatus.textContent = 'Sending reply…';
+    try {
+      const response = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Ticket-Access-Token': credential.accessToken,
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({ message }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || 'Could not send this reply.');
+      await loadMyTickets();
+    } catch (error) {
+      responseStatus.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  void loadMyTickets();
   type.addEventListener('change', () => {
     const isIssue = type.value === 'issue';
     game.hidden = !isIssue;
@@ -949,10 +1082,19 @@ function bindFeedbackForm() {
       });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.error || 'Could not send feedback. Please try again.');
+      const credential = {
+        ticketId: result.ticketId,
+        accessToken: result.accessToken,
+        ticketNumber: result.ticketNumber,
+      };
+      const saved = saveTicketCredentials(credential);
       form.reset();
       game.hidden = true;
       gameLabel.hidden = true;
-      status.textContent = 'Thanks — your feedback was sent.';
+      status.textContent = saved
+        ? `Thanks — ticket #${result.ticketNumber} was created and saved in My Tickets.`
+        : `Ticket #${result.ticketNumber} was created. Save this private access key to keep access: ${result.accessToken}`;
+      await loadMyTickets();
     } catch (error) {
       status.textContent = error.message;
     } finally {

@@ -12,6 +12,7 @@ let refreshTimer;
 let toastTimer;
 let feedbackEntries = [];
 const openedFeedback = new Set();
+const openedConversations = new Set();
 const selectedFeedback = new Set();
 const selectedRoadmap = new Set();
 const roadmapStatusLabels = {
@@ -269,13 +270,20 @@ function setAdminView(name, focusTarget = '') {
 
 function formatDate(value) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    timeZone: 'Asia/Bahrain', timeZoneName: 'short',
+  }).format(date);
 }
 
 function updateMetrics(counts, games, activity) {
-  const openFeedback = feedbackEntries.filter((entry) => !['resolved', 'archived'].includes(entry.status)).length;
-  const today = new Date().toDateString();
-  const activityToday = activity.filter((item) => new Date(item.createdAt).toDateString() === today).length;
+  const openFeedback = feedbackEntries.filter((entry) => !entry.archived
+    && !['implemented', 'resolved', 'rejected', 'closed'].includes(entry.status)).length;
+  const bahrainDay = (value) => new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Bahrain',
+  }).format(new Date(value));
+  const today = bahrainDay(Date.now());
+  const activityToday = activity.filter((item) => bahrainDay(item.createdAt) === today).length;
   document.querySelector('#metric-total').textContent = counts.total;
   document.querySelector('#metric-published').textContent = counts.published;
   document.querySelector('#metric-drafts').textContent = counts.drafts;
@@ -551,18 +559,29 @@ function renderProposals() {
 }
 
 const feedbackStatusLabels = {
-  new: '🆕 New',
-  seen: '👁️ Seen',
-  working: '🔧 Working On It',
-  resolved: '✅ Resolved',
-  important: '📌 Important',
-  archived: '🗄️ Archived',
+  new: 'New',
+  under_review: 'Under Review',
+  planned: 'Planned',
+  in_progress: 'In Progress',
+  awaiting_user_reply: 'Awaiting User Reply',
+  implemented: 'Implemented',
+  resolved: 'Resolved',
+  rejected: 'Rejected',
+  closed: 'Closed',
 };
+const feedbackPriorityLabels = { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' };
 
 function formatFeedbackDate(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 'Unknown time' : new Intl.DateTimeFormat('en-US', {
-    month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short',
+    month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Bahrain', timeZoneName: 'short',
+  }).format(date);
+}
+
+function bahrainDateKey(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Bahrain',
   }).format(date);
 }
 
@@ -571,20 +590,42 @@ function renderFeedback() {
   const query = document.querySelector('#feedback-search').value.trim().toLocaleLowerCase();
   const type = document.querySelector('#feedback-type-filter').value;
   const status = document.querySelector('#feedback-status-filter').value;
+  const priority = document.querySelector('#feedback-priority-filter').value;
   const gameId = document.querySelector('#feedback-game-filter').value;
   const sorting = document.querySelector('#feedback-sort').value;
+  const dateFrom = document.querySelector('#feedback-date-from').value;
+  const dateTo = document.querySelector('#feedback-date-to').value;
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const activeTickets = feedbackEntries.filter((entry) => !entry.archived);
+  document.querySelector('#ticket-metric-open').textContent = activeTickets.filter((entry) =>
+    !['implemented', 'resolved', 'rejected', 'closed'].includes(entry.status)).length;
+  document.querySelector('#ticket-metric-awaiting').textContent = activeTickets.filter((entry) => entry.status === 'awaiting_user_reply').length;
+  document.querySelector('#ticket-metric-critical').textContent = activeTickets.filter((entry) => entry.priority === 'critical').length;
+  document.querySelector('#ticket-metric-recent').textContent = feedbackEntries.filter((entry) => Date.parse(entry.createdAt) >= cutoff).length;
+  const breakdown = [...Object.entries(feedbackStatusLabels).map(([key, label]) => ({
+    key, label, count: activeTickets.filter((entry) => entry.status === key).length,
+  })), { key: 'archived', label: 'Archived', count: feedbackEntries.filter((entry) => entry.archived).length }];
+  const largestCount = Math.max(1, ...breakdown.map((item) => item.count));
+  document.querySelector('#ticket-status-breakdown').innerHTML = breakdown.map((item) => `
+    <div class="ticket-status-count" data-status="${item.key}"><span>${item.label}</span><strong>${item.count}</strong>
+      <i style="--ticket-status-share:${Math.round(item.count / largestCount * 100)}%"></i></div>`).join('');
   const filtered = feedbackEntries.filter((entry) => {
     const searchable = [
-      entry.message, games.get(entry.gameId) || '', entry.type,
-      entry.deviceInfo?.deviceType, entry.deviceInfo?.operatingSystem, entry.deviceInfo?.browser,
-      entry.deviceInfo?.screenResolution, entry.deviceInfo?.octoVersion,
+      entry.ticketNumber && `#${entry.ticketNumber}`, entry.message, games.get(entry.gameId) || '', entry.type, entry.priority,
+      entry.deviceInfo?.deviceType, entry.deviceInfo?.deviceName, entry.deviceInfo?.operatingSystem,
+      entry.deviceInfo?.operatingSystemVersion, entry.deviceInfo?.browser, entry.deviceInfo?.browserVersion,
+      entry.deviceInfo?.language, entry.deviceInfo?.timezone, entry.deviceInfo?.screenResolution, entry.deviceInfo?.octoVersion,
     ].join(' ').toLocaleLowerCase();
+    const createdDay = bahrainDateKey(entry.createdAt);
     return (!query || searchable.includes(query))
       && (type === 'all' || entry.type === type)
-      && (status === 'all' || entry.status === status)
+      && (status === 'all' || (status === 'archived' ? entry.archived : entry.status === status))
+      && (priority === 'all' || entry.priority === priority)
+      && (!dateFrom || createdDay >= dateFrom)
+      && (!dateTo || createdDay <= dateTo)
       && (gameId === 'all' || (gameId === 'none' ? !entry.gameId : entry.gameId === gameId));
   });
-  const statusOrder = ['new', 'important', 'working', 'seen', 'resolved', 'archived'];
+  const statusOrder = ['new', 'under_review', 'awaiting_user_reply', 'in_progress', 'planned', 'implemented', 'resolved', 'rejected', 'closed'];
   filtered.sort((first, second) => {
     if (sorting === 'oldest') return first.createdAt.localeCompare(second.createdAt);
     if (sorting === 'updated') return second.updatedAt.localeCompare(first.updatedAt);
@@ -594,12 +635,12 @@ function renderFeedback() {
     return second.createdAt.localeCompare(first.createdAt);
   });
   const newCount = feedbackEntries.filter((entry) => entry.status === 'new').length;
-  const seenCount = feedbackEntries.filter((entry) => entry.status === 'seen').length;
+  const archivedCount = feedbackEntries.filter((entry) => entry.archived).length;
   const visibleIds = new Set(filtered.map((entry) => entry.id));
   for (const id of selectedFeedback) {
     if (!feedbackEntries.some((entry) => entry.id === id)) selectedFeedback.delete(id);
   }
-  document.querySelector('#feedback-new-count').textContent = `${newCount} New · ${seenCount} Seen`;
+  document.querySelector('#feedback-new-count').textContent = `${newCount} New · ${archivedCount} Archived`;
   const gameFilter = document.querySelector('#feedback-game-filter');
   const selectedGame = gameFilter.value;
   gameFilter.replaceChildren(new Option('All games', 'all'), new Option('Not related to a game', 'none'));
@@ -609,7 +650,8 @@ function renderFeedback() {
   const container = document.querySelector('#feedback-list');
   container.innerHTML = filtered.length ? filtered.map((entry) => {
     const device = entry.deviceInfo || {};
-    const deviceSummary = [device.deviceType, device.operatingSystem, device.browser].filter(Boolean).join(' · ') || 'Unknown device';
+    const deviceSummary = [device.deviceType, device.deviceName, device.operatingSystem, device.browser]
+      .filter(Boolean).join(' · ') || 'Unknown device';
     const technical = [
       device.screenResolution && `Screen: ${device.screenResolution}`,
       device.octoVersion && `Build: ${device.octoVersion}`,
@@ -617,7 +659,7 @@ function renderFeedback() {
     return `<article class="feedback-card${entry.status === 'new' ? ' is-new' : ''}" data-feedback-card="${entry.id}">
       <div class="feedback-card-top">
         <label class="feedback-select-label"><input type="checkbox" data-feedback-select="${entry.id}"${selectedFeedback.has(entry.id) ? ' checked' : ''} aria-label="Select this feedback"></label>
-        <div class="feedback-title"><span class="feedback-type" data-type="${entry.type}">${entry.type === 'issue' ? '🐛 ISSUE' : '💡 SUGGESTION'}</span><span class="feedback-game">${escapeHtml(entry.gameId ? games.get(entry.gameId) || 'Unknown game' : 'Not related to a game')}</span></div>
+        <div class="feedback-title"><span class="feedback-ticket-number">#${escapeHtml(entry.ticketNumber || '—')}</span><span class="feedback-type" data-type="${entry.type}">${entry.type === 'issue' ? '🐛 ISSUE' : '💡 SUGGESTION'}</span><span class="feedback-game">${escapeHtml(entry.gameId ? games.get(entry.gameId) || 'Unknown game' : 'Not related to a game')}</span></div>
         <span class="feedback-time">${escapeHtml(formatFeedbackDate(entry.createdAt))}</span>
       </div>
       <p class="feedback-message">${escapeHtml(entry.message)}</p>
@@ -628,10 +670,35 @@ function renderFeedback() {
             ${Object.entries(feedbackStatusLabels).map(([key, label]) => `<option value="${key}"${entry.status === key ? ' selected' : ''}>${label}</option>`).join('')}
           </select>
         </label>
+        <label>Priority
+          <select data-feedback-priority="${entry.id}" aria-label="Priority for ticket">
+            ${Object.entries(feedbackPriorityLabels).map(([key, label]) => `<option value="${key}"${entry.priority === key ? ' selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <button class="small-button" type="button" data-feedback-archive="${entry.id}" data-archived="${entry.archived ? 'true' : 'false'}">${entry.archived ? 'Unarchive' : 'Archive'}</button>
+        <button class="small-button" type="button" data-feedback-delete="${entry.id}">Delete</button>
         <span class="feedback-updated">Updated ${escapeHtml(formatFeedbackDate(entry.updatedAt))}</span>
       </div>
+      <details data-ticket-conversation="${entry.id}"${openedConversations.has(entry.id) ? ' open' : ''}>
+        <summary>Conversation and activity</summary>
+        <div class="feedback-conversation" data-conversation-list="${entry.id}"><p class="subtle">Open to load conversation history.</p></div>
+        ${entry.userAccessEnabled ? `<form class="feedback-reply-form" data-admin-reply="${entry.id}">
+          <label for="feedback-reply-${entry.id}">Reply to user</label>
+          <textarea id="feedback-reply-${entry.id}" name="message" rows="3" maxlength="5000" required></textarea>
+          <button class="small-button" type="submit">Send reply</button>
+          <p data-admin-reply-status role="status" aria-live="polite"></p>
+        </form>` : '<p class="subtle">Legacy inquiry: no user portal access was issued, so replies are unavailable.</p>'}
+      </details>
       <details data-feedback-details="${entry.id}"${openedFeedback.has(entry.id) ? ' open' : ''}>
-        <summary>Open feedback and private admin notes</summary>
+        <summary>Ticket diagnostics and private admin notes</summary>
+        <dl class="feedback-device-details">
+          <div><dt>Device</dt><dd>${escapeHtml([device.deviceType, device.deviceName].filter(Boolean).join(' · ') || 'Unknown')}</dd></div>
+          <div><dt>Browser</dt><dd>${escapeHtml([device.browser, device.browserVersion].filter(Boolean).join(' ') || 'Unknown')}</dd></div>
+          <div><dt>Operating system</dt><dd>${escapeHtml([device.operatingSystem, device.operatingSystemVersion].filter(Boolean).join(' ') || 'Unknown')}</dd></div>
+          <div><dt>Language</dt><dd>${escapeHtml(device.language || 'Unknown')}</dd></div>
+          <div><dt>Timezone</dt><dd>${escapeHtml(device.timezone || 'Unknown')}</dd></div>
+          <div><dt>Screen</dt><dd>${escapeHtml(device.screenResolution || 'Unknown')}</dd></div>
+        </dl>
         <label for="feedback-note-${entry.id}">Private admin notes</label>
         <textarea id="feedback-note-${entry.id}" data-feedback-notes="${entry.id}" rows="3" maxlength="5000">${escapeHtml(entry.adminNotes || '')}</textarea>
         <button class="small-button" type="button" data-save-feedback-notes="${entry.id}">Save private notes</button>
@@ -654,6 +721,40 @@ async function updateFeedbackStatus(id, status) {
   }
   if (status === 'new') openedFeedback.delete(id);
   renderFeedback();
+}
+
+async function updateFeedbackPriority(id, priority) {
+  const result = await api(`/api/admin/feedback/${encodeURIComponent(id)}/priority`, {
+    method: 'PATCH',
+    body: JSON.stringify({ priority }),
+  });
+  const entry = feedbackEntries.find((feedback) => feedback.id === id);
+  if (entry) {
+    entry.priority = priority;
+    entry.updatedAt = result.updatedAt;
+  }
+  renderFeedback();
+}
+
+async function loadFeedbackConversation(id) {
+  const container = feedbackList.querySelector(`[data-conversation-list="${id}"]`);
+  if (!container) return;
+  container.innerHTML = '<p class="subtle">Loading conversation…</p>';
+  try {
+    const result = await api(`/api/admin/feedback/${encodeURIComponent(id)}/conversation`);
+    const messages = result.conversation || [];
+    const activity = result.activity || [];
+    container.innerHTML = `${messages.length ? `<ol class="feedback-conversation-list">${messages.map((message) => `
+      <li data-author="${message.author === 'admin' ? 'admin' : 'user'}"><div><strong>${message.author === 'admin' ? 'Admin' : 'User'}</strong><time>${escapeHtml(formatFeedbackDate(message.createdAt))}</time></div><p>${escapeHtml(message.message)}</p></li>`).join('')}</ol>` : '<p class="subtle">No conversation messages.</p>'}
+      ${activity.length ? `<ul class="feedback-activity-list">${activity.map((event) => {
+        const action = event.action || '';
+        const actor = event.actor_type || event.actorType || 'admin';
+        const createdAt = event.created_at || event.createdAt;
+        return `<li><span>${escapeHtml(actor === 'user' ? 'User' : 'Admin')} · ${escapeHtml(action.replaceAll('_', ' '))}</span><time>${escapeHtml(formatFeedbackDate(createdAt))}</time></li>`;
+      }).join('')}</ul>` : ''}`;
+  } catch (error) {
+    container.textContent = error.message;
+  }
 }
 
 async function refreshDashboard() {
@@ -810,6 +911,25 @@ document.querySelector('#proposal-list').addEventListener('click', async (event)
 
 const feedbackList = document.querySelector('#feedback-list');
 feedbackList.addEventListener('toggle', async (event) => {
+  const conversation = event.target.closest('details[data-ticket-conversation]');
+  if (conversation) {
+    const id = conversation.dataset.ticketConversation;
+    if (conversation.open) {
+      openedConversations.add(id);
+      const entry = feedbackEntries.find((feedback) => feedback.id === id);
+      if (entry?.status === 'new') {
+        try {
+          await updateFeedbackStatus(id, 'under_review');
+        } catch (error) {
+          showToast(error.message);
+        }
+      }
+      await loadFeedbackConversation(id);
+    } else {
+      openedConversations.delete(id);
+    }
+    return;
+  }
   const details = event.target.closest('details[data-feedback-details]');
   if (!details) return;
   const id = details.dataset.feedbackDetails;
@@ -818,7 +938,7 @@ feedbackList.addEventListener('toggle', async (event) => {
     const entry = feedbackEntries.find((feedback) => feedback.id === id);
     if (entry?.status === 'new') {
       try {
-        await updateFeedbackStatus(id, 'seen');
+        await updateFeedbackStatus(id, 'under_review');
       } catch (error) {
         showToast(error.message);
       }
@@ -840,6 +960,17 @@ feedbackList.addEventListener('change', async (event) => {
     }
     return;
   }
+  const priority = event.target.closest('[data-feedback-priority]');
+  if (priority) {
+    priority.disabled = true;
+    try {
+      await updateFeedbackPriority(priority.dataset.feedbackPriority, priority.value);
+    } catch (error) {
+      showToast(error.message);
+      renderFeedback();
+    }
+    return;
+  }
   if (event.target.matches('[data-feedback-select]')) {
     if (event.target.checked && selectedFeedback.size >= 50) {
       event.target.checked = false;
@@ -853,6 +984,42 @@ feedbackList.addEventListener('change', async (event) => {
 });
 
 feedbackList.addEventListener('click', async (event) => {
+  const archiveButton = event.target.closest('[data-feedback-archive]');
+  if (archiveButton) {
+    archiveButton.disabled = true;
+    const id = archiveButton.dataset.feedbackArchive;
+    const action = archiveButton.dataset.archived === 'true' ? 'unarchive' : 'archive';
+    try {
+      const result = await api(`/api/admin/feedback/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' });
+      const entry = feedbackEntries.find((feedback) => feedback.id === id);
+      if (entry) {
+        entry.archived = result.archived;
+        entry.updatedAt = result.updatedAt;
+      }
+      renderFeedback();
+    } catch (error) {
+      showToast(error.message);
+      archiveButton.disabled = false;
+    }
+    return;
+  }
+  const deleteButton = event.target.closest('[data-feedback-delete]');
+  if (deleteButton) {
+    const id = deleteButton.dataset.feedbackDelete;
+    if (!window.confirm('Delete this ticket and revoke its user access?')) return;
+    deleteButton.disabled = true;
+    try {
+      await api(`/api/admin/feedback/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      feedbackEntries = feedbackEntries.filter((entry) => entry.id !== id);
+      selectedFeedback.delete(id);
+      updateMetrics(dashboard.counts, dashboard.games, dashboard.activity);
+      renderFeedback();
+    } catch (error) {
+      showToast(error.message);
+      deleteButton.disabled = false;
+    }
+    return;
+  }
   const button = event.target.closest('[data-save-feedback-notes]');
   if (!button) return;
   button.disabled = true;
@@ -878,8 +1045,31 @@ feedbackList.addEventListener('click', async (event) => {
   }
 });
 
-for (const selector of ['#feedback-search', '#feedback-type-filter', '#feedback-status-filter', '#feedback-game-filter', '#feedback-sort']) {
-  document.querySelector(selector).addEventListener(selector === '#feedback-search' ? 'input' : 'change', renderFeedback);
+feedbackList.addEventListener('submit', async (event) => {
+  const form = event.target.closest('[data-admin-reply]');
+  if (!form) return;
+  event.preventDefault();
+  const id = form.dataset.adminReply;
+  const submit = form.querySelector('button[type="submit"]');
+  const status = form.querySelector('[data-admin-reply-status]');
+  submit.disabled = true;
+  status.textContent = 'Sending reply…';
+  try {
+    await api(`/api/admin/feedback/${encodeURIComponent(id)}/reply`, {
+      method: 'POST', body: JSON.stringify({ message: form.elements.message.value }),
+    });
+    openedConversations.add(id);
+    await refreshDashboard();
+    await loadFeedbackConversation(id);
+    showToast('Reply sent to ticket.');
+  } catch (error) {
+    status.textContent = error.message;
+    submit.disabled = false;
+  }
+});
+
+  for (const selector of ['#feedback-search', '#feedback-type-filter', '#feedback-status-filter', '#feedback-priority-filter', '#feedback-game-filter', '#feedback-sort', '#feedback-date-from', '#feedback-date-to']) {
+    document.querySelector(selector).addEventListener(selector === '#feedback-search' ? 'input' : 'change', renderFeedback);
 }
 document.querySelector('#feedback-select-all').addEventListener('change', (event) => {
   feedbackList.querySelectorAll('input[data-feedback-select]').forEach((checkbox) => {
@@ -908,7 +1098,6 @@ document.querySelector('#feedback-bulk-apply').addEventListener('click', async (
     showToast('Select feedback and choose a status first.');
     return;
   }
-  if (status === 'archived' && !window.confirm(`Archive ${ids.length} selected submission${ids.length === 1 ? '' : 's'}? You can restore them later.`)) return;
   const button = event.currentTarget;
   button.disabled = true;
   try {
@@ -922,6 +1111,40 @@ document.querySelector('#feedback-bulk-apply').addEventListener('click', async (
     showToast(error.message);
   } finally {
     button.disabled = false;
+  }
+});
+
+document.querySelector('#feedback-bulk-archive').addEventListener('click', async (event) => {
+  const ids = [...selectedFeedback];
+  if (!ids.length || !window.confirm(`Archive ${ids.length} selected ticket${ids.length === 1 ? '' : 's'}?`)) return;
+  event.currentTarget.disabled = true;
+  try {
+    await Promise.all(ids.map((id) => {
+      const entry = feedbackEntries.find((feedback) => feedback.id === id);
+      const action = entry?.archived ? 'unarchive' : 'archive';
+      return api(`/api/admin/feedback/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' });
+    }));
+    selectedFeedback.clear();
+    await refreshDashboard();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    event.currentTarget.disabled = false;
+  }
+});
+
+document.querySelector('#feedback-bulk-delete').addEventListener('click', async (event) => {
+  const ids = [...selectedFeedback];
+  if (!ids.length || !window.confirm(`Delete ${ids.length} selected ticket${ids.length === 1 ? '' : 's'} and revoke user access?`)) return;
+  event.currentTarget.disabled = true;
+  try {
+    await Promise.all(ids.map((id) => api(`/api/admin/feedback/${encodeURIComponent(id)}`, { method: 'DELETE' })));
+    selectedFeedback.clear();
+    await refreshDashboard();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    event.currentTarget.disabled = false;
   }
 });
 
