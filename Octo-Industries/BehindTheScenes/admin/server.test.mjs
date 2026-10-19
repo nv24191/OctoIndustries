@@ -165,6 +165,8 @@ test('admin service protects and manages the canonical library', async (t) => {
   assert.equal(hiddenFile.status, 404);
   const unauthorized = await fetch(`${baseUrl}/api/admin/dashboard`);
   assert.equal(unauthorized.status, 401);
+  assert.match(unauthorized.headers.get('x-request-id') || '', /^[a-f\d]{24}$/);
+  assert.equal((await unauthorized.json()).requestId, unauthorized.headers.get('x-request-id'));
   assert.equal((await fetch(`${baseUrl}/api/admin/feedback`)).status, 401);
   assert.equal((await fetch(`${baseUrl}/api/admin/roadmap`)).status, 401);
   const publicRoadmapResponse = await fetch(`${baseUrl}/api/roadmap`);
@@ -357,8 +359,14 @@ test('admin service protects and manages the canonical library', async (t) => {
 
   const dashboard = await fetch(`${baseUrl}/api/admin/dashboard`, { headers });
   assert.equal(dashboard.status, 200);
+  assert.match(dashboard.headers.get('x-request-id') || '', /^[a-f\d]{24}$/);
   const initial = await dashboard.json();
   assert.ok(initial.counts.total > 0);
+  assert.ok(Array.isArray(initial.games));
+  assert.ok(Array.isArray(initial.jobs));
+  assert.ok(Array.isArray(initial.activity));
+  assert.ok(Array.isArray(initial.roadmap));
+  assert.ok(initial.activity.some((item) => item.message.includes('inquiry')));
   assert.equal(initial.capabilities.changeProposals, false);
   const gameId = initial.games[0].id;
 
@@ -412,6 +420,11 @@ test('admin service protects and manages the canonical library', async (t) => {
   const mappedJob = await waitForJob(baseUrl, headers, (await mappedLoopback.json()).id);
   assert.equal(mappedJob.status, 'failed');
   assert.match(mappedJob.message, /private or reserved/i);
+  const operationsDashboard = await (await fetch(`${baseUrl}/api/admin/dashboard`, { headers })).json();
+  assert.ok(operationsDashboard.counts.failedJobs >= 2);
+  assert.ok(operationsDashboard.jobs.some((job) => job.id === analysisJob.id && job.status === 'failed'));
+  assert.ok(operationsDashboard.activity.some((item) => item.message.includes('failed')));
+  assert.ok(operationsDashboard.activity.every((item) => Number.isFinite(Date.parse(item.createdAt))));
 
   const buildResponse = await fetch(`${baseUrl}/api/admin/build`, {
     method: 'POST',

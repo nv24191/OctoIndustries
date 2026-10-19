@@ -12,8 +12,11 @@ let dashboard;
 let roadmapItems = [];
 const chatHistory = [];
 let refreshTimer;
+let refreshInterval;
+let dashboardRefreshPromise;
 let toastTimer;
 let feedbackEntries = [];
+let feedbackLoadError = null;
 const openedFeedback = new Set();
 const openedConversations = new Set();
 const selectedFeedback = new Set();
@@ -164,13 +167,31 @@ async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (options.body !== undefined) headers.set('Content-Type', 'application/json');
   if (options.method && options.method !== 'GET' && csrfToken) headers.set('X-CSRF-Token', csrfToken);
-  const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
-  const body = response.headers.get('content-type')?.includes('application/json')
-    ? await response.json()
-    : null;
+  const method = (options.method || 'GET').toUpperCase();
+  let response;
+  try {
+    response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
+  } catch (cause) {
+    const error = new Error(cause.message || 'Network request failed.');
+    error.endpoint = `${method} ${path}`;
+    throw error;
+  }
+  let body = null;
+  if (response.headers.get('content-type')?.includes('application/json')) {
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+  }
   if (!response.ok) {
-    if (response.status === 401 && path !== '/api/admin/login') showLogin();
-    throw new Error(body?.error || `Request failed (${response.status}).`);
+    if (response.status === 401 && path !== '/api/admin/login') showLogin('Your admin session expired. Sign in again to continue.');
+    const error = new Error(body?.error || `Request failed (${response.status}).`);
+    error.endpoint = `${method} ${path}`;
+    error.status = response.status;
+    error.requestId = response.headers.get('x-request-id') || body?.requestId || '';
+    error.details = body?.details || '';
+    throw error;
   }
   return body;
 }
@@ -207,6 +228,7 @@ function showToast(message) {
 
 function showLogin(message = '') {
   clearInterval(refreshTimer);
+  refreshInterval = null;
   csrfToken = '';
   dashboardError.hidden = true;
   setDrawerOpen(false);
@@ -291,15 +313,29 @@ function updateMetrics(counts, games, activity) {
   document.querySelector('#metric-total').textContent = counts.total;
   document.querySelector('#metric-published').textContent = counts.published;
   document.querySelector('#metric-drafts').textContent = counts.drafts;
-  document.querySelector('#metric-open-feedback').textContent = openFeedback;
+  document.querySelector('#metric-open-feedback').textContent = feedbackLoadError ? 'Unavailable' : openFeedback;
   document.querySelector('#metric-failed').textContent = counts.failedJobs;
   document.querySelector('#metric-offline').textContent = counts.offlineReady;
   document.querySelector('#metric-categories').textContent = new Set(games.map((game) => game.category).filter(Boolean)).size;
   document.querySelector('#metric-activity-today').textContent = activityToday;
   document.querySelector('#nav-game-count').textContent = games.length;
-  document.querySelector('#nav-feedback-count').textContent = openFeedback;
+  document.querySelector('#nav-feedback-count').textContent = feedbackLoadError ? '!' : openFeedback;
   document.querySelector('#nav-failed-count').textContent = counts.failedJobs;
   document.querySelector('#nav-roadmap-count').textContent = roadmapItems.filter((item) => !['released', 'archived'].includes(item.status)).length;
+}
+
+function renderOverviewFeedback() {
+  const feedback = [...feedbackEntries].sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt)).slice(0, 4);
+  const feedbackContainer = document.querySelector('#overview-feedback');
+  if (feedbackLoadError) {
+    feedbackContainer.innerHTML = `<p class="muted overview-empty">${escapeHtml(formatLoadError('Recent inquiries', '/api/admin/feedback', feedbackLoadError))}</p>`;
+    return;
+  }
+  const gameTitles = new Map((dashboard?.games || []).map((game) => [game.id, game.title]));
+  feedbackContainer.innerHTML = feedback.length ? feedback.map((entry) => `<button class="overview-row" type="button" data-feedback-open="${escapeHtml(entry.id)}">
+    <span class="overview-row-copy"><strong>${escapeHtml(entry.type === 'issue' ? 'Issue' : 'Suggestion')} · ${escapeHtml(entry.gameId ? gameTitles.get(entry.gameId) || 'Unknown game' : 'Platform')}</strong><span>${escapeHtml(entry.message.slice(0, 92))}${entry.message.length > 92 ? '…' : ''}</span></span>
+    <span class="feedback-type" data-type="${escapeHtml(entry.type)}">${escapeHtml(entry.status)}</span>
+  </button>`).join('') : '<p class="muted overview-empty">No inquiries yet.</p>';
 }
 
 function renderOverview() {
@@ -308,10 +344,8 @@ function renderOverview() {
     return failedOrder || Date.parse(second.createdAt) - Date.parse(first.createdAt);
   }).slice(0, 4);
   const activity = dashboard?.activity || [];
-  const feedback = [...feedbackEntries].sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt)).slice(0, 4);
   const jobsContainer = document.querySelector('#overview-jobs');
   const activityContainer = document.querySelector('#overview-activity');
-  const feedbackContainer = document.querySelector('#overview-feedback');
 
   jobsContainer.innerHTML = jobs.length ? jobs.map((job) => `<button class="overview-row" type="button" data-admin-view="operations">
     <span class="overview-row-copy"><strong>${escapeHtml(job.type)}${job.gameId ? ` · ${escapeHtml(job.gameId)}` : ''}</strong><span>${escapeHtml(job.message)}</span></span>
@@ -323,14 +357,10 @@ function renderOverview() {
     <span class="overview-arrow" aria-hidden="true">↗</span>
   </button>`).join('') : '<p class="muted overview-empty">No recent activity.</p>';
 
-  const gameTitles = new Map((dashboard?.games || []).map((game) => [game.id, game.title]));
-  feedbackContainer.innerHTML = feedback.length ? feedback.map((entry) => `<button class="overview-row" type="button" data-feedback-open="${escapeHtml(entry.id)}">
-    <span class="overview-row-copy"><strong>${escapeHtml(entry.type === 'issue' ? 'Issue' : 'Suggestion')} · ${escapeHtml(entry.gameId ? gameTitles.get(entry.gameId) || 'Unknown game' : 'Platform')}</strong><span>${escapeHtml(entry.message.slice(0, 92))}${entry.message.length > 92 ? '…' : ''}</span></span>
-    <span class="feedback-type" data-type="${escapeHtml(entry.type)}">${escapeHtml(entry.status)}</span>
-  </button>`).join('') : '<p class="muted overview-empty">No feedback yet.</p>';
+  renderOverviewFeedback();
 
   const summary = document.querySelector('#roadmap-summary');
-  const statusOrder = ['idea', 'planned', 'in-progress', 'testing', 'released', 'on-hold'];
+  const statusOrder = ['idea', 'planned', 'in-progress', 'testing', 'released', 'on-hold', 'archived'];
   summary.innerHTML = statusOrder.map((status) => `<button class="roadmap-summary-item" type="button" data-roadmap-filter="${status}">
     <span>${escapeHtml(roadmapStatusLabels[status])}</span><strong>${roadmapItems.filter((item) => item.status === status).length}</strong>
   </button>`).join('');
@@ -590,6 +620,17 @@ function bahrainDateKey(value) {
 }
 
 function renderFeedback() {
+  if (feedbackLoadError) {
+    const container = document.querySelector('#feedback-list');
+    container.replaceChildren();
+    const message = document.createElement('p');
+    message.className = 'muted feedback-empty';
+    message.textContent = formatLoadError('Inquiries', '/api/admin/feedback', feedbackLoadError);
+    container.append(message);
+    document.querySelector('#feedback-new-count').textContent = 'Unavailable';
+    document.querySelector('#feedback-selection-count').textContent = `${selectedFeedback.size} selected`;
+    return;
+  }
   const games = new Map((dashboard?.games || []).map((game) => [game.id, game.title]));
   const query = document.querySelector('#feedback-search').value.trim().toLocaleLowerCase();
   const type = document.querySelector('#feedback-type-filter').value;
@@ -682,6 +723,7 @@ function renderFeedback() {
         <button class="small-button" type="button" data-feedback-archive="${entry.id}" data-archived="${entry.archived ? 'true' : 'false'}">${entry.archived ? 'Unarchive' : 'Archive'}</button>
         <button class="small-button" type="button" data-feedback-delete="${entry.id}">Delete</button>
         <span class="feedback-updated">Updated ${escapeHtml(formatFeedbackDate(entry.updatedAt))}</span>
+        <button class="small-button" type="button" data-delete-inquiry="${escapeHtml(entry.id)}">Delete inquiry</button>
       </div>
       <details data-ticket-conversation="${entry.id}"${openedConversations.has(entry.id) ? ' open' : ''}>
         <summary>Conversation and activity</summary>
@@ -761,30 +803,128 @@ async function loadFeedbackConversation(id) {
   }
 }
 
-async function refreshDashboard() {
-  dashboard = await api('/api/admin/dashboard');
-  feedbackEntries = await api('/api/admin/feedback');
-  roadmapItems = Array.isArray(dashboard.roadmap) ? dashboard.roadmap : await api('/api/admin/roadmap');
-  updateMetrics(dashboard.counts, dashboard.games, dashboard.activity);
-  renderGames();
-  renderJobs();
-  renderActivity();
-  renderProposals();
-  renderFeedback();
-  renderRoadmap();
-  renderOverview();
-  dashboardError.hidden = true;
-  if (dashboard.jobs.some((job) => job.status === 'queued' || job.status === 'running')) {
-    if (!refreshTimer) refreshTimer = setInterval(() => refreshDashboard().catch((error) => showToast(error.message)), 2200);
-  } else {
-    clearInterval(refreshTimer);
-    refreshTimer = null;
-  }
+function formatLoadError(label, endpoint, error) {
+  const status = error.displayStatus || (error.status ? `HTTP ${error.status}` : 'Network error');
+  const requestId = error.requestId ? ` Request ID: ${error.requestId}.` : '';
+  const technical = error.details || error.message;
+  return `Unable to load ${label.toLowerCase()}. Endpoint: GET ${endpoint}. Status: ${status}.${requestId} ${technical} Retry available.`;
 }
 
 function showDashboardError(error) {
-  dashboardErrorMessage.textContent = `Dashboard data could not be loaded: ${error.message} Check the Render service logs if this continues.`;
+  const endpoint = error.endpoint || 'GET /api/admin/dashboard';
+  const status = error.displayStatus || (error.status ? `HTTP ${error.status}` : 'Network error');
+  dashboardErrorMessage.textContent =
+    `Unable to load dashboard statistics and operations data. Endpoint: ${endpoint}. Status: ${status}.${error.requestId ? ` Request ID: ${error.requestId}.` : ''}`;
+  document.querySelector('#dashboard-error-details').textContent =
+    error.details || error.message || 'The request did not return a response.';
   dashboardError.hidden = false;
+  for (const selector of ['#metric-total', '#metric-published', '#metric-drafts', '#metric-failed',
+    '#metric-offline', '#metric-categories', '#metric-activity-today', '#metric-open-feedback']) {
+    document.querySelector(selector).textContent = 'Unavailable';
+  }
+  for (const selector of ['#nav-game-count', '#nav-feedback-count', '#nav-failed-count', '#nav-roadmap-count']) {
+    document.querySelector(selector).textContent = '!';
+  }
+  for (const selector of ['#overview-jobs', '#overview-activity']) {
+    const content = document.querySelector(selector);
+    content.replaceChildren();
+    const message = document.createElement('p');
+    message.className = 'muted overview-empty';
+    message.textContent = formatLoadError(selector === '#overview-jobs' ? 'Recent jobs' : 'Recent activity', '/api/admin/dashboard', error);
+    content.append(message);
+  }
+  renderOverviewFeedback();
+  document.querySelector('#roadmap-summary').textContent = 'Roadmap data unavailable until dashboard data can be loaded.';
+}
+
+function responseShapeError(path, reason) {
+  const error = new Error(`The server returned invalid data: ${reason}.`);
+  error.endpoint = `GET ${path}`;
+  error.displayStatus = 'Invalid response';
+  return error;
+}
+
+function validateDashboardPayload(payload) {
+  const counts = payload?.counts;
+  const arrays = ['games', 'jobs', 'activity', 'roadmap'];
+  if (!counts || typeof counts !== 'object'
+    || !['total', 'published', 'drafts', 'offlineReady', 'failedJobs'].every((key) => Number.isFinite(counts[key]))
+    || arrays.some((key) => !Array.isArray(payload[key]) || payload[key].some((entry) => !entry || typeof entry !== 'object'))) {
+    throw responseShapeError('/api/admin/dashboard', 'expected counts and games, jobs, activity, and roadmap arrays');
+  }
+  return payload;
+}
+
+function refreshDashboard() {
+  if (!dashboardRefreshPromise) {
+    dashboardRefreshPromise = refreshDashboardData().finally(() => {
+      dashboardRefreshPromise = null;
+    });
+  }
+  return dashboardRefreshPromise;
+}
+
+async function refreshDashboardData() {
+  if (!dashboard) {
+    for (const selector of ['#overview-jobs', '#overview-activity', '#overview-feedback']) {
+      const content = document.querySelector(selector);
+      content.textContent = 'Loading…';
+    }
+  }
+  const [dashboardResult, feedbackResult] = await Promise.allSettled([
+    api('/api/admin/dashboard'),
+    api('/api/admin/feedback'),
+  ]);
+  feedbackLoadError = feedbackResult.status === 'rejected'
+    ? feedbackResult.reason
+    : !Array.isArray(feedbackResult.value) || feedbackResult.value.some((entry) => !entry
+      || typeof entry.id !== 'string' || typeof entry.message !== 'string'
+      || typeof entry.status !== 'string' || typeof entry.createdAt !== 'string')
+      ? responseShapeError('/api/admin/feedback', 'expected inquiry records with IDs, messages, statuses, and timestamps')
+      : null;
+  if (feedbackResult.status === 'fulfilled' && !feedbackLoadError) feedbackEntries = feedbackResult.value;
+  if (dashboardResult.status === 'rejected') {
+    dashboard = undefined;
+    showDashboardError(dashboardResult.reason);
+    renderFeedback();
+    if (!feedbackLoadError) {
+      const openInquiries = feedbackEntries.filter((entry) => !entry.archived
+        && !['implemented', 'resolved', 'rejected', 'closed'].includes(entry.status)).length;
+      document.querySelector('#metric-open-feedback').textContent = openInquiries;
+      document.querySelector('#nav-feedback-count').textContent = openInquiries;
+    }
+    return;
+  }
+  try {
+    dashboard = validateDashboardPayload(dashboardResult.value);
+    dashboardError.hidden = true;
+    roadmapItems = dashboard.roadmap;
+    updateMetrics(dashboard.counts, dashboard.games, dashboard.activity);
+    renderGames();
+    renderJobs();
+    renderActivity();
+    renderProposals();
+    renderFeedback();
+    renderRoadmap();
+    renderOverview();
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    dashboard = undefined;
+    roadmapItems = [];
+    if (!failure.endpoint) failure.endpoint = 'GET /api/admin/dashboard';
+    if (!failure.displayStatus && !failure.status) failure.displayStatus = 'Client rendering error';
+    showDashboardError(failure);
+    renderFeedback();
+    return;
+  }
+  const pollEvery = dashboard.jobs.some((job) => job.status === 'queued' || job.status === 'running')
+    ? 5000
+    : 30000;
+  if (refreshInterval !== pollEvery) {
+    clearInterval(refreshTimer);
+    refreshInterval = pollEvery;
+    refreshTimer = setInterval(() => refreshDashboard().catch((error) => showToast(error.message)), pollEvery);
+  }
 }
 
 dashboardRetryButton.addEventListener('click', async () => {
@@ -1343,6 +1483,15 @@ async function initialize() {
     if (error.message !== 'Admin authentication required.') showDashboardError(error);
   }
 }
+
+document.querySelector('#dashboard-retry').addEventListener('click', async (event) => {
+  event.currentTarget.disabled = true;
+  try {
+    await refreshDashboard();
+  } finally {
+    event.currentTarget.disabled = false;
+  }
+});
 
 initialize();
 

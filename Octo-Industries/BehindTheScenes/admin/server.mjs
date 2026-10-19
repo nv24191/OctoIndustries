@@ -236,8 +236,9 @@ async function insertFeedback(feedback) {
     feedback.conversation = [];
     feedback.activity = [{ action: 'created', actorType: 'user', createdAt: feedback.createdAt }];
     state.feedback.unshift(feedback);
-    await saveState();
   }
+  recordActivity(`New ${feedback.type} inquiry submitted`);
+  await saveState();
 }
 
 async function updateFeedback(id, updates) {
@@ -248,11 +249,12 @@ async function updateFeedback(id, updates) {
     const assignments = entries.map(([field]) => `${field} = ?`).join(', ');
     await d1Query(`UPDATE feedback_submissions SET ${assignments}, updated_at = ? WHERE id = ?`,
       [...entries.map(([, value]) => value), updatedAt, id]);
-    return updatedAt;
+  } else {
+    const feedback = (state.feedback || []).find((entry) => entry.id === id);
+    if (!feedback) return false;
+    Object.assign(feedback, updates, { updatedAt });
   }
-  const feedback = (state.feedback || []).find((entry) => entry.id === id);
-  if (!feedback) return false;
-  Object.assign(feedback, updates, { updatedAt });
+  recordActivity(`Updated inquiry ${id}${updates.status ? ` status to ${updates.status}` : ' private notes'}`);
   await saveState();
   return updatedAt;
 }
@@ -455,6 +457,10 @@ function recordActivity(message) {
 }
 
 function sendJson(response, status, value, extraHeaders = {}) {
+  if (status >= 400) {
+    response.failureReason = value?.error || `HTTP ${status}`;
+    value = { ...value, requestId: response.getHeader('X-Request-Id') };
+  }
   response.writeHead(status, {
     'Cache-Control': 'no-store',
     'Content-Type': 'application/json; charset=utf-8',
@@ -1219,10 +1225,8 @@ async function handleRequest(request, response) {
       return;
     }
     if (pathname === '/api/admin/dashboard' && request.method === 'GET') {
-      await ensureFeedbackSchema();
       state.proposals = Array.isArray(state.proposals) ? state.proposals : [];
       const games = state.games;
-      const feedback = await feedbackRows();
       sendJson(response, 200, {
         counts: {
           total: games.length,
@@ -1231,7 +1235,6 @@ async function handleRequest(request, response) {
           offlineReady: games.filter((game) => game.offlineReady === true).length,
           needsAttention: games.filter((game) => game.status === 'needs-attention').length,
           failedJobs: state.jobs.filter((job) => job.status === 'failed').length,
-          newFeedback: feedback.filter((entry) => entry.status === 'new').length,
         },
         games,
         jobs: state.jobs.slice(0, 30),
@@ -1435,6 +1438,9 @@ async function handleRequest(request, response) {
           record.status = status;
           record.updatedAt = updatedAt;
         }
+      }
+      if (ids.length) {
+        recordActivity(`Updated ${ids.length} inquiries to ${status}`);
         await saveState();
       }
       for (const id of ids) await recordTicketActivity(id, `status_${status}`, 'admin', updatedAt);
@@ -1774,11 +1780,37 @@ if (process.env.NODE_ENV === 'production' && !remoteD1Configured) {
 
 await loadState();
 const server = createServer((request, response) => {
+  const requestId = randomBytes(12).toString('hex');
+  const timestamp = new Date().toISOString();
+  const endpoint = new URL(request.url, `http://${request.headers.host || 'localhost'}`).pathname;
+  response.setHeader('X-Request-Id', requestId);
+  response.on('finish', () => {
+    if (response.statusCode >= 400) {
+      console.error(JSON.stringify({
+        requestId,
+        timestamp,
+        method: request.method,
+        endpoint,
+        status: response.statusCode,
+        reason: response.failureReason || `HTTP ${response.statusCode}`,
+      }));
+    }
+  });
   handleRequest(request, response).catch((error) => {
-    console.error(`${request.method} ${request.url}:`, error);
     if (!response.headersSent) {
       const status = error.status || (error instanceof URIError ? 400 : 500);
-      sendJson(response, status, { error: status < 500 ? error.message : 'The server could not complete the request.' });
+      const adminToken = (request.headers.cookie || '').split(';')
+        .map((cookie) => cookie.trim())
+        .find((cookie) => cookie.startsWith(`${sessionCookie}=`))
+        ?.slice(sessionCookie.length + 1);
+      const hasAdminSession = /^[a-f\d]{64}$/.test(adminToken || '') && sessions.has(adminToken);
+      sendJson(response, status, {
+        error: status < 500 ? error.message : 'The admin service could not complete this request.',
+        ...(status >= 500 && endpoint.startsWith('/api/admin/') && hasAdminSession
+          ? { details: error.message }
+          : {}),
+      });
+      if (status >= 500) response.failureReason = error.message;
     } else {
       response.destroy(error);
     }

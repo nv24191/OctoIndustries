@@ -37,18 +37,18 @@
           <div class="sidebar-brand"><img src="/Octo-Industries/branding/primary-logo.png" alt=""><div><strong>OCTO INDUSTRIES</strong><span>ADMIN DASHBOARD</span></div></div>
           <nav class="admin-navigation" aria-label="Admin Dashboard sections">
             <button class="nav-item is-active" type="button" data-admin-view="overview" aria-current="page" aria-label="Overview" title="Overview"><span class="nav-icon" aria-hidden="true">⌂</span><span>Overview</span></button>
-            <button class="nav-item roadmap-nav-item" type="button" data-admin-view="roadmap" aria-label="Roadmap" title="Roadmap"><span class="nav-icon" aria-hidden="true">↗</span><span>Roadmap</span><span class="nav-count" id="nav-roadmap-count">—</span></button>
+            <button class="nav-item roadmap-nav-item" type="button" data-admin-view="roadmap" aria-label="Roadmap" title="Roadmap"><span class="nav-icon" aria-hidden="true">↗</span><span>Roadmap</span><span class="nav-count" id="nav-roadmap-count">Loading…</span></button>
             <details class="nav-group" open>
               <summary aria-label="Games" title="Games" data-admin-view="games"><span class="nav-icon" aria-hidden="true">◈</span><span>Games</span></summary>
-              <button class="nav-item nav-subitem" type="button" data-admin-view="games"><span>Library</span><span class="nav-count" id="nav-game-count">—</span></button>
+              <button class="nav-item nav-subitem" type="button" data-admin-view="games"><span>Library</span><span class="nav-count" id="nav-game-count">Loading…</span></button>
               <button class="nav-item nav-subitem" type="button" data-admin-view="games" data-focus-target="#category-filter"><span>Categories &amp; tags</span></button>
               <button class="nav-item nav-subitem is-planned" type="button" disabled title="No game creation API is available yet"><span>Add game</span><small>Planned</small></button>
               <button class="nav-item nav-subitem is-planned" type="button" disabled title="Game DNA storage is not available yet"><span>Game DNA</span><small data-roadmap-label="game-dna">Planned</small></button>
               <button class="nav-item nav-subitem is-planned" type="button" disabled title="Game changelog management is not available yet"><span>Changelogs</span><small>Planned</small></button>
             </details>
             <details class="nav-group" open>
-              <summary aria-label="Community" title="Community" data-admin-view="community"><span class="nav-icon" aria-hidden="true">◉</span><span>Community</span><span class="nav-count" id="nav-feedback-count">—</span></summary>
-              <button class="nav-item nav-subitem" type="button" data-admin-view="community"><span>Feedback inbox</span></button>
+              <summary aria-label="Community" title="Community" data-admin-view="community"><span class="nav-icon" aria-hidden="true">◉</span><span>Community</span><span class="nav-count" id="nav-feedback-count">Loading…</span></summary>
+              <button class="nav-item nav-subitem" type="button" data-admin-view="community"><span>Inquiries</span></button>
               <button class="nav-item nav-subitem is-planned" type="button" disabled title="Reviews are not collected by the current backend"><span>Reviews, requests &amp; voting</span><small>Planned</small></button>
             </details>
             <details class="nav-group">
@@ -57,7 +57,7 @@
               <button class="nav-item nav-subitem is-planned" type="button" disabled title="Featured content workflow is not available yet"><span>Coming soon &amp; featured</span><small>Planned</small></button>
             </details>
             <details class="nav-group" open>
-              <summary aria-label="Operations" title="Operations" data-admin-view="operations"><span class="nav-icon" aria-hidden="true">⌁</span><span>Operations</span><span class="nav-count" id="nav-failed-count">—</span></summary>
+              <summary aria-label="Operations" title="Operations" data-admin-view="operations"><span class="nav-icon" aria-hidden="true">⌁</span><span>Operations</span><span class="nav-count" id="nav-failed-count">Loading…</span></summary>
               <button class="nav-item nav-subitem" type="button" data-admin-view="operations"><span>Job center</span></button>
               <button class="nav-item nav-subitem" type="button" data-admin-view="operations" data-focus-target="#game-url"><span>Health checks &amp; source scan</span></button>
               <button class="nav-item nav-subitem is-planned" type="button" disabled title="Integrity scanning is not available yet"><span>Integrity Scanner</span><small>Planned</small></button>
@@ -102,8 +102,10 @@
             </div>
           </header>
 
-          <div class="dashboard-error" id="dashboard-error" role="alert" hidden>
-            <p id="dashboard-error-message"></p>
+          <div class="dashboard-error dashboard-load-error" id="dashboard-error" role="alert" aria-live="assertive" hidden>
+            <div><strong>Dashboard data unavailable</strong><p id="dashboard-error-message"></p>
+              <details><summary>Admin technical details</summary><pre id="dashboard-error-details"></pre></details>
+            </div>
             <button class="small-button" id="dashboard-retry" type="button">Retry</button>
           </div>
 
@@ -111,14 +113,14 @@
             <section class="admin-panel" data-admin-panel="overview" aria-labelledby="overview-title">
               <h2 class="visually-hidden" id="overview-title">Overview</h2>
               <section class="metrics" aria-label="Platform summary">
-                <article class="metric"><span>Total games</span><strong id="metric-total">—</strong></article>
-                <article class="metric"><span>Published</span><strong id="metric-published">—</strong></article>
-                <article class="metric"><span>Drafts</span><strong id="metric-drafts">—</strong></article>
-                <article class="metric"><span>Open feedback</span><strong id="metric-open-feedback">—</strong></article>
-                <article class="metric"><span>Failed jobs</span><strong id="metric-failed">—</strong></article>
-                <article class="metric"><span>Offline verified</span><strong id="metric-offline">—</strong></article>
-                <article class="metric"><span>Categories</span><strong id="metric-categories">—</strong></article>
-                <article class="metric"><span>Activity today</span><strong id="metric-activity-today">—</strong></article>
+                <article class="metric"><span>Total games</span><strong id="metric-total">Loading…</strong></article>
+                <article class="metric"><span>Published</span><strong id="metric-published">Loading…</strong></article>
+                <article class="metric"><span>Drafts</span><strong id="metric-drafts">Loading…</strong></article>
+                <article class="metric"><span>Open inquiries</span><strong id="metric-open-feedback">Loading…</strong></article>
+                <article class="metric"><span>Failed jobs</span><strong id="metric-failed">Loading…</strong></article>
+                <article class="metric"><span>Offline verified</span><strong id="metric-offline">Loading…</strong></article>
+                <article class="metric"><span>Categories</span><strong id="metric-categories">Loading…</strong></article>
+                <article class="metric"><span>Activity today</span><strong id="metric-activity-today">Loading…</strong></article>
               </section>
               <div class="overview-actions-bar" aria-label="Quick actions">
                 <button class="quick-action" type="button" data-admin-view="games"><span aria-hidden="true">▦</span>Open game library</button>
@@ -129,7 +131,7 @@
               <div class="overview-grid">
                 <section class="panel overview-widget" aria-labelledby="overview-jobs-title"><div class="section-heading"><div><p class="eyebrow">OPERATIONS</p><h2 id="overview-jobs-title">Recent jobs</h2></div><button class="text-action" type="button" data-admin-view="operations">All jobs <span aria-hidden="true">→</span></button></div><div class="overview-list" id="overview-jobs"></div></section>
                 <section class="panel overview-widget" aria-labelledby="overview-activity-title"><div class="section-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2 id="overview-activity-title">Recent activity</h2></div><button class="text-action" type="button" data-admin-view="operations">Activity <span aria-hidden="true">→</span></button></div><div class="overview-list" id="overview-activity"></div></section>
-                <section class="panel overview-widget overview-feedback" aria-labelledby="overview-feedback-title"><div class="section-heading"><div><p class="eyebrow">COMMUNITY</p><h2 id="overview-feedback-title">Recent feedback</h2></div><button class="text-action" type="button" data-admin-view="community">Inbox <span aria-hidden="true">→</span></button></div><div class="overview-list" id="overview-feedback"></div></section>
+                <section class="panel overview-widget overview-feedback" aria-labelledby="overview-feedback-title"><div class="section-heading"><div><p class="eyebrow">COMMUNITY</p><h2 id="overview-feedback-title">Recent inquiries</h2></div><button class="text-action" type="button" data-admin-view="community">Inbox <span aria-hidden="true">→</span></button></div><div class="overview-list" id="overview-feedback"></div></section>
                 <section class="panel overview-widget roadmap-overview" aria-labelledby="roadmap-overview-title"><div class="section-heading"><div><p class="eyebrow">PLATFORM DEVELOPMENT</p><h2 id="roadmap-overview-title">Roadmap overview</h2></div><button class="text-action" type="button" data-admin-view="roadmap">Manage <span aria-hidden="true">→</span></button></div><div class="roadmap-summary" id="roadmap-summary"></div></section>
               </div>
             </section>
@@ -176,7 +178,7 @@
 
             <section class="admin-panel" data-admin-panel="community" aria-labelledby="feedback-inbox-title" hidden>
               <section class="panel feedback-inbox">
-                <div class="section-heading"><div><p class="eyebrow">PRIVATE INBOX</p><h2 id="feedback-inbox-title">Suggestions &amp; Issues <span class="feedback-new-badge" id="feedback-new-count">0 New</span></h2></div></div>
+                <div class="section-heading"><div><p class="eyebrow">PRIVATE INBOX</p><h2 id="feedback-inbox-title">Inquiries <span class="feedback-new-badge" id="feedback-new-count">0 New</span></h2></div></div>
                 <section class="ticket-analytics" aria-labelledby="ticket-analytics-title">
                   <h3 id="ticket-analytics-title">Ticket analytics</h3>
                   <div class="ticket-analytics-metrics">

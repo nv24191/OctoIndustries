@@ -496,7 +496,7 @@ export async function handleAdmin(request, env) {
     await env.ADMIN_DB.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').bind(session.tokenHash).run();
     return json({ authenticated: false }, 200, { 'Set-Cookie': sessionCookie('', 0) });
   }
-  if (path === '/api/admin/dashboard' || path.startsWith('/api/admin/feedback')) {
+  if (path.startsWith('/api/admin/feedback')) {
     await ensureFeedbackSchema(env.ADMIN_DB);
   }
   const state = await loadState(request, env);
@@ -535,9 +535,6 @@ export async function handleAdmin(request, env) {
   }
   if (path === '/api/admin/dashboard' && request.method === 'GET') {
     const games = state.games;
-    const newFeedback = await env.ADMIN_DB.prepare(
-      "SELECT COUNT(*) AS count FROM feedback_submissions WHERE status = 'new'",
-    ).first();
     return json({
       counts: {
         total: games.length,
@@ -546,7 +543,6 @@ export async function handleAdmin(request, env) {
         offlineReady: games.filter((game) => game.offlineReady === true).length,
         needsAttention: games.filter((game) => game.status === 'needs-attention').length,
         failedJobs: state.jobs.filter((job) => job.status === 'failed').length,
-        newFeedback: newFeedback.count,
       },
       games,
       jobs: state.jobs.slice(0, 30),
@@ -631,6 +627,8 @@ export async function handleAdmin(request, env) {
       const updatedAt = new Date().toISOString();
       await env.ADMIN_DB.prepare('UPDATE feedback_submissions SET admin_notes = ?, updated_at = ? WHERE id = ?')
         .bind(notes, updatedAt, id).run();
+      activity(state, `Updated inquiry ${id} private notes`);
+      await saveState(env, state);
       return json({ id, adminNotes: notes, updatedAt });
     }
     if (action === 'priority') {
@@ -650,6 +648,8 @@ export async function handleAdmin(request, env) {
     await env.ADMIN_DB.prepare(
       'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
     ).bind(randomToken().slice(0, 20), id, `status_${status}`, 'admin', updatedAt).run();
+    activity(state, `Updated inquiry ${id} status to ${status}`);
+    await saveState(env, state);
     return json({ id, status, updatedAt });
   }
   if (path === '/api/admin/feedback/bulk' && request.method === 'POST') {
@@ -674,6 +674,8 @@ export async function handleAdmin(request, env) {
         'INSERT INTO feedback_activity (id, feedback_id, action, actor_type, created_at) VALUES (?, ?, ?, ?, ?)',
       ).bind(randomToken().slice(0, 20), id, `status_${status}`, 'admin', updatedAt).run();
     }
+    activity(state, `Updated ${matchingIds.length} inquiries to ${status}`);
+    await saveState(env, state);
     return json({ updated: matchingIds.length, status });
   }
   if (path === '/api/admin/chat' && request.method === 'POST') return chat(request, env, state);

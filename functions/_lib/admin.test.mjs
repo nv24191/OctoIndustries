@@ -301,12 +301,20 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
   assert.equal(login.status, 200);
   const { csrfToken } = await login.json();
   const cookie = login.headers.get('set-cookie').split(';', 1)[0];
+  const prepare = env.ADMIN_DB.prepare.bind(env.ADMIN_DB);
+  env.ADMIN_DB.prepare = (sql) => {
+    if (sql.startsWith('SELECT COUNT(*) AS count FROM feedback_submissions')) {
+      throw new Error('Feedback storage is unavailable.');
+    }
+    return prepare(sql);
+  };
   const dashboardRequest = new Request(`${baseUrl}/api/admin/dashboard`, { headers: { Cookie: cookie } });
   const dashboardResponse = await handleAdmin(dashboardRequest, env);
   assert.equal(dashboardResponse.status, 200);
   const dashboard = await dashboardResponse.json();
   assert.ok(dashboard.counts.total > 0);
-  assert.equal(dashboard.counts.newFeedback, 0);
+  assert.equal('newFeedback' in dashboard.counts, false);
+  assert.ok(dashboard.activity.length > 0);
   assert.ok(dashboard.roadmap.length > 0);
   const legacyTicketId = 'e'.repeat(32);
   env.ADMIN_DB.feedback.set(legacyTicketId, {
@@ -445,6 +453,11 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
     headers: { 'X-Ticket-Access-Token': ticketCredentials.accessToken },
   }), env);
   assert.equal(deletedTicketAccess.status, 404);
+  const invalidInquiryDelete = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback/${submissions[0].id}/notes`, {
+    method: 'DELETE',
+    headers: { Cookie: cookie, Origin: baseUrl, 'X-CSRF-Token': csrfToken },
+  }), env);
+  assert.equal(invalidInquiryDelete.status, 404);
 
   const editUrl = `${baseUrl}/api/admin/games/${game.id}`;
   const invalidEdit = await handleAdmin(new Request(editUrl, {
