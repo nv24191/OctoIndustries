@@ -1,5 +1,11 @@
 services:
   - type: web
+    name: octo-industries
+    runtime: node
+    buildCommand: echo "No build required"
+    startCommand: node Octo-Industries/BehindTheScenes/admin/legacy-domain-redirect.mjs
+    healthCheckPath: /healthz
+  - type: web
     name: octo-industries-hub-web
     runtime: node
     buildCommand: npm --prefix Octo-Industries/BehindTheScenes run sync
