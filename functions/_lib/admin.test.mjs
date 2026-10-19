@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { pbkdf2Sync, randomBytes, webcrypto } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { handleAdmin, handleCatalog, handleFeedback, handleRoadmap, handleTickets } from './admin.js';
+import { ensureFeedbackSchema, legacyFeedbackMigrationStatements } from './feedback.js';
 import { onRequest as serveCompressedAsset } from '../Octo-Industries/Red-Ball-4/Build/[[path]].js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -25,10 +26,19 @@ class MemoryDatabase {
     this.ticketActivity = [];
     this.nextTicketNumber = 1001;
     this.schemaInitializationCalls = 0;
+    this.legacyFeedbackSchema = false;
+    this.feedbackMigrationStatements = [];
   }
 
   prepare(sql) {
     return new MemoryStatement(this, sql);
+  }
+
+  async batch(statements) {
+    assert.equal(this.legacyFeedbackSchema, true);
+    this.feedbackMigrationStatements = statements.map((statement) => statement.sql);
+    this.legacyFeedbackSchema = false;
+    return statements.map(() => ({ success: true }));
   }
 }
 
@@ -90,6 +100,12 @@ class MemoryStatement {
   }
 
   async all() {
+    if (this.sql === 'PRAGMA table_info(feedback_submissions)') {
+      const names = this.database.legacyFeedbackSchema
+        ? ['id', 'type', 'game_id', 'message', 'device_info', 'status', 'admin_notes', 'created_at', 'updated_at']
+        : ['id', 'ticket_number', 'access_token_hash', 'type', 'game_id', 'message', 'device_info', 'status', 'priority', 'admin_notes', 'archived_at', 'deleted_at', 'created_at', 'updated_at'];
+      return { results: names.map((name) => ({ name })) };
+    }
     if (this.sql.startsWith('SELECT id FROM feedback_submissions WHERE deleted_at IS NULL')) {
       return { results: this.values.filter((id) => this.database.feedback.has(id)
         && !this.database.feedback.get(id).deleted_at).map((id) => ({ id })) };
@@ -491,6 +507,20 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
   }), env);
   assert.equal(logout.status, 200);
   assert.equal((await handleAdmin(dashboardRequest, env)).status, 401);
+});
+
+test('legacy inquiry schema is upgraded in a D1 batch before ticketing queries run', async () => {
+  const database = new MemoryDatabase();
+  database.legacyFeedbackSchema = true;
+
+  await ensureFeedbackSchema(database);
+
+  assert.equal(database.legacyFeedbackSchema, false);
+  assert.deepEqual(database.feedbackMigrationStatements, legacyFeedbackMigrationStatements);
+  assert.ok(database.feedbackMigrationStatements.some((sql) => sql.includes('FROM feedback_submissions')));
+  assert.ok(database.feedbackMigrationStatements.some((sql) => sql.includes('admin_notes')));
+  assert.ok(database.feedbackMigrationStatements.some((sql) => sql.includes('feedback_conversations')));
+  assert.equal(database.schemaInitializationCalls, 10);
 });
 
 test('Cloudflare large-asset route returns a correctly encoded gzip representation', async () => {

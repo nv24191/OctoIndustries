@@ -17,6 +17,7 @@ import {
 } from './change-proposals.mjs';
 import {
   feedbackSchemaStatements,
+  legacyFeedbackMigrationStatements,
   normalizeFeedback,
   validateAdminNotes,
   validateConversationMessage,
@@ -160,9 +161,33 @@ async function d1Query(sql, params = []) {
   } catch {
     throw new Error(`Cloudflare D1 returned an invalid response (HTTP ${response.status}).`);
   }
-  const queryResult = payload.result?.[0];
-  if (!response.ok || !payload.success || queryResult?.success === false) {
-    console.error('Cloudflare D1 query failed:', response.status, payload.errors);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error(`Cloudflare D1 returned an invalid response (HTTP ${response.status}).`);
+  }
+  const queryResults = Array.isArray(payload.result) ? payload.result : [];
+  const queryResult = queryResults[0];
+  const failedResult = queryResults.find((result) => result?.success === false);
+  if (!response.ok || !payload.success || failedResult) {
+    const providerErrors = Array.isArray(payload.errors)
+      ? payload.errors.map((error) => ({
+        code: Number.isFinite(error?.code) ? error.code : undefined,
+        message: typeof error?.message === 'string' ? error.message.slice(0, 300) : 'Unknown Cloudflare D1 error',
+      }))
+      : [];
+    if (failedResult && !providerErrors.length) {
+      const failure = failedResult.error;
+      providerErrors.push({
+        code: Number.isFinite(failure?.code) ? failure.code : undefined,
+        message: typeof failure?.message === 'string' ? failure.message.slice(0, 300) : 'A D1 batch statement failed.',
+      });
+    }
+    console.error('Cloudflare D1 query failed:', {
+      timestamp: new Date().toISOString(),
+      endpoint: 'Cloudflare D1 /query',
+      status: response.status,
+      requestId: response.headers.get('cf-ray') || null,
+      reason: providerErrors,
+    });
     throw new Error('Cloudflare D1 rejected an admin database request. Check the D1 API token permissions and database setup.');
   }
   return queryResult || { success: true, results: [] };
@@ -172,6 +197,15 @@ async function ensureFeedbackSchema() {
   if (!remoteD1Configured) return;
   if (!feedbackSchemaInitialization) {
     feedbackSchemaInitialization = (async () => {
+      let columns = (await d1Query('PRAGMA table_info(feedback_submissions)')).results || [];
+      if (columns.length && !columns.some((column) => column.name === 'ticket_number')) {
+        try {
+          await d1Query(legacyFeedbackMigrationStatements.join(';\n'));
+        } catch (error) {
+          columns = (await d1Query('PRAGMA table_info(feedback_submissions)')).results || [];
+          if (!columns.length || !columns.some((column) => column.name === 'ticket_number')) throw error;
+        }
+      }
       for (const sql of feedbackSchemaStatements) await d1Query(sql);
     })();
   }
