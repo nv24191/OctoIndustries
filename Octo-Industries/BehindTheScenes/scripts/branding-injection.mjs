@@ -29,16 +29,36 @@ function hasBrandingAsset(html, assetName, attributeName, launchFile, root) {
 export function ensureGameBranding(html, launchFile, root) {
   const brandingDirectory = resolve(root, 'Octo-Industries/branding');
   const assets = [];
+  const usesLoaderDirectly = /\bOctoLoader\.(?:show|loadRuffle)\s*\(/.test(html);
+  for (const [assetName, attributeName, tagName] of [
+    ['game-branding.css', 'href', 'link'],
+    ['game-branding.js', 'src', 'script'],
+    ['game-loader.css', 'href', 'link'],
+    ['game-loader.js', 'src', 'script'],
+  ]) {
+    if (hasBrandingAsset(html, assetName, attributeName, launchFile, root)) continue;
+    const reference = assetReference(launchFile, resolve(brandingDirectory, assetName));
+    assets.push(tagName === 'link'
+      ? `<link rel="stylesheet" href="${reference}">`
+      : `<script defer src="${reference}"${assetName === 'game-loader.js' && !usesLoaderDirectly ? ' data-octo-auto-loader' : ''}></script>`);
+  }
+  let result = html;
+  if (usesLoaderDirectly) return insertAssets(result, assets);
 
-  if (!hasBrandingAsset(html, 'game-branding.css', 'href', launchFile, root)) {
-    assets.push(`<link rel="stylesheet" href="${assetReference(launchFile, resolve(brandingDirectory, 'game-branding.css'))}">`);
-  }
-  if (!hasBrandingAsset(html, 'game-branding.js', 'src', launchFile, root)) {
-    assets.push(`<script defer src="${assetReference(launchFile, resolve(brandingDirectory, 'game-branding.js'))}"></script>`);
-  }
+  const loaderScript = /<script\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1[^>]*>/gi;
+  result = result.replace(loaderScript, (tag) => {
+    if (/\bdata-octo-auto-loader\b/i.test(tag)) return tag;
+    const match = /\bsrc\s*=\s*(["'])(.*?)\1/i.exec(tag);
+    if (!match || !hasBrandingAsset(`<${tag.slice(1)}`, 'game-loader.js', 'src', launchFile, root)) return tag;
+    return tag.replace(/>$/, ' data-octo-auto-loader>');
+  });
+  return insertAssets(result, assets)
+    .replace(/\n[ \t]+\n(?=[ \t]*<(?:link|script)\b[^>\n]*game-(?:branding|loader)\.)/g, '\n');
+}
+
+function insertAssets(html, assets) {
   if (!assets.length) return html;
-
-  const markup = `\n    ${assets.join('\n    ')}\n  `;
+  const markup = `\n    ${assets.join('\n    ')}\n`;
   if (/<\/head\s*>/i.test(html)) {
     return html.replace(/<\/head\s*>/i, `${markup}</head>`);
   }

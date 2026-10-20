@@ -136,4 +136,20 @@
   }
 
   window.OctoLoader = { show, fetchWithProgress, loadRuffle };
+
+  if (document.currentScript?.hasAttribute('data-octo-auto-loader')) {
+    const loader = show();
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      loader.finish(120);
+    };
+    if (document.readyState === 'complete') {
+      finish();
+    } else {
+      window.addEventListener('load', finish, { once: true });
+      window.setTimeout(finish, 30_000);
+    }
+  }
 })();

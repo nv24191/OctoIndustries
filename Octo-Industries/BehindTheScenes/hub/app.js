@@ -1,4 +1,5 @@
 import { getRouteTitle, normalizeHubRoute } from './route-utils.js';
+import { catalogCategories } from './catalog-utils.mjs';
 
 let games = Array.isArray(window.OCTO_GAMES) ? [...window.OCTO_GAMES] : [];
 let byId = new Map(games.map((game) => [game.id, game]));
@@ -78,10 +79,24 @@ function updateFilterButtonLabel() {
 }
 
 function categories() {
-  if (categoryList) {
-    categoryList.innerHTML = '';
-    categoryList.hidden = true;
+  const categoryOptions = document.querySelector('#filter-options');
+  const availableCategories = catalogCategories(games);
+  if (activeCategory !== 'All' && !availableCategories.includes(activeCategory)) {
+    activeCategory = 'All';
   }
+  if (categoryOptions) {
+    categoryOptions.replaceChildren();
+    for (const [value, label] of [['All', 'All Games'], ...availableCategories.map((category) => [category, category])]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `filter-option${activeCategory === value ? ' is-active' : ''}`;
+      button.dataset.category = value;
+      button.setAttribute('aria-pressed', String(activeCategory === value));
+      button.textContent = label;
+      categoryOptions.append(button);
+    }
+  }
+  if (categoryList) categoryList.hidden = true;
   updateFilterButtonLabel();
 }
 
@@ -680,8 +695,9 @@ function bindEvents() {
     renderGames();
   });
 
-  document.querySelectorAll('.filter-option').forEach((button) => {
-    button.addEventListener('click', () => {
+  document.querySelector('#filter-options')?.addEventListener('click', (event) => {
+    const button = event.target.closest('.filter-option[data-category]');
+    if (button) {
       const panel = document.querySelector('#filter-panel');
       activeCategory = button.dataset.category;
       categories();
@@ -691,7 +707,7 @@ function bindEvents() {
       if (filterButton) {
         filterButton.setAttribute('aria-expanded', 'false');
       }
-    });
+    }
   });
 
   document.querySelector('#filter-games')?.addEventListener('click', () => {
