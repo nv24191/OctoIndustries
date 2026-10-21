@@ -347,5 +347,27 @@ window.OCTO_GAMES = Object.freeze([
     "sourceFile": "Octo-Industries/Toss-The-Turtle/game.json",
     "banner": "/Octo-Industries/Toss-The-Turtle/hub-banner.svg?v=d7d95bfd66576254",
     "screenshots": []
+  },
+  {
+    "id": "web-dashers",
+    "title": "Web Dashers",
+    "description": "A browser-based Geometry Dash demo mod with built-in levels, an icon kit, and online level features. Hosted by its creators; an internet connection is required.",
+    "version": "upstream",
+    "category": "Platform",
+    "tags": [
+      "platformer",
+      "rhythm",
+      "phaser",
+      "online-levels",
+      "browser"
+    ],
+    "featured": false,
+    "thumbnail": "/Octo-Industries/Web-Dashers/hub-banner.svg?v=8fc22cdc0a69a756",
+    "accent": "#c1fb3d",
+    "launch": "/Octo-Industries/Web-Dashers/index.html",
+    "sourceFile": "Octo-Industries/Web-Dashers/game.json",
+    "banner": "/Octo-Industries/Web-Dashers/hub-banner.svg?v=8fc22cdc0a69a756",
+    "addedAt": "2026-10-21T08:02:58.024Z",
+    "screenshots": []
   }
 ]);

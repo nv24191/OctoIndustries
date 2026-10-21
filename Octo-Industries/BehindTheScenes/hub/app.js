@@ -23,8 +23,6 @@ let slideIndex = 0;
 let searchTimer;
 let activeGallery;
 let galleryIndex = 0;
-const gamesPerPage = 15;
-let currentPage = 1;
 const fallbackBannerUrl = '/Octo-Industries/branding/fallback-banner.svg?v=1';
 
 function escapeHtml(value = '') {
@@ -150,16 +148,7 @@ function renderGames() {
     return first.title.localeCompare(second.title);
   });
 
-  const totalPages = Math.max(1, Math.ceil(matches.length / gamesPerPage));
-  if (currentPage > totalPages) currentPage = totalPages;
-  const offset = (currentPage - 1) * gamesPerPage;
-  const pageMatches = matches.slice(offset, offset + gamesPerPage);
-  const pagination = document.querySelector('#game-pagination');
-  const pageStatus = document.querySelector('#page-status');
-  const previousButton = document.querySelector('#games-previous');
-  const nextButton = document.querySelector('#games-next');
-
-  grid.innerHTML = pageMatches.map((game, index) => gameCard(game, index)).join('');
+  grid.innerHTML = matches.map((game, index) => gameCard(game, index)).join('');
   grid.hidden = matches.length === 0;
   emptyState.hidden = matches.length > 0;
   grid.setAttribute('aria-busy', 'false');
