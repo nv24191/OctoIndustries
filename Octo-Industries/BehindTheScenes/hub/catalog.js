@@ -349,6 +349,27 @@ window.OCTO_GAMES = Object.freeze([
     "screenshots": []
   },
   {
+    "id": "turball",
+    "title": "Turball",
+    "description": "Drive, boost, and score in a 3D car-soccer arena with bot matches and free play.",
+    "version": "1.0.0",
+    "addedAt": "2026-10-21T10:34:00.000Z",
+    "category": "Sports",
+    "tags": [
+      "car soccer",
+      "racing",
+      "sports",
+      "3d",
+      "casual"
+    ],
+    "launch": "/Octo-Industries/Turball/index.html",
+    "thumbnail": "/Octo-Industries/Turball/hub-banner.svg?v=12e07e6feaa5519e",
+    "featured": false,
+    "sourceFile": "Octo-Industries/Turball/game.json",
+    "banner": "/Octo-Industries/Turball/hub-banner.svg?v=12e07e6feaa5519e",
+    "screenshots": []
+  },
+  {
     "id": "web-dashers",
     "title": "Web Dashers",
     "description": "A browser-based Geometry Dash demo mod with built-in levels, an icon kit, and online level features. Hosted by its creators; an internet connection is required.",

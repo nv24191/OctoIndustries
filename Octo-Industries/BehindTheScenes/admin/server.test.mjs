@@ -130,11 +130,18 @@ test('admin service protects and manages the canonical library', async (t) => {
   const runtimeCatalogResponse = await fetch(`${baseUrl}/api/catalog`);
   const runtimeCatalog = await runtimeCatalogResponse.json();
   for (const game of runtimeCatalog) {
+    assert.ok(game.title && game.description && game.category && game.addedAt);
+    assert.ok(game.thumbnail && game.banner);
+    assert.ok(Array.isArray(game.tags));
     const launchResponse = await fetch(`${baseUrl}${game.launch}`);
     assert.equal(launchResponse.status, 200, `${game.title} launch page should be served`);
     const launchHtml = await launchResponse.text();
     assert.match(launchHtml, /game-branding\.css/, `${game.title} should load shared branding styles`);
     assert.match(launchHtml, /game-branding\.js/, `${game.title} should load the shared home button`);
+    for (const artwork of [game.thumbnail, game.banner]) {
+      const artworkResponse = await fetch(new URL(artwork, baseUrl));
+      assert.equal(artworkResponse.status, 200, `${game.title} artwork should be served`);
+    }
   }
   for (const id of ['8-ball-pool-online', 'baggio-magical-kicks']) {
     const actual = runtimeCatalog.find((game) => game.id === id);
@@ -144,6 +151,11 @@ test('admin service protects and manages the canonical library', async (t) => {
     assert.deepEqual(actual.screenshots, expected.screenshots);
     assert.equal(actual.sourceFile, expected.sourceFile);
   }
+  const turball = runtimeCatalog.find((game) => game.id === 'turball');
+  assert.ok(turball, 'Turball is registered in the public game catalog');
+  const turballLaunch = await (await fetch(`${baseUrl}${turball.launch}`)).text();
+  assert.match(turballLaunch, /src="https:\/\/turball\.io\/casual"/);
+  assert.match(turballLaunch, /requires an internet connection/);
   assert.equal(runtimeCatalog.find((game) => game.id === 'baggio-magical-kicks').title, 'Owner-edited Baggio title');
   const publicCatalog = await fetch(`${baseUrl}/Octo-Industries/BehindTheScenes/hub/catalog.js`);
   assert.equal(publicCatalog.status, 200);

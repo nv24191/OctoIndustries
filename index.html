@@ -161,18 +161,9 @@
         <label class="sort-box" for="game-sort"><span>Sort</span><select id="game-sort"><option value="title">Title A–Z</option><option value="title-desc">Title Z–A</option><option value="category">Category</option><option value="recent">Recently added</option></select></label>
         <div class="filter-panel" id="filter-panel" hidden>
           <h3>Filter Games</h3>
-          <button type="button" class="filter-option is-active" data-category="All">All Games</button>
-          <button type="button" class="filter-option" data-category="Action">Action</button>
-          <button type="button" class="filter-option" data-category="Arcade">Arcade</button>
-          <button type="button" class="filter-option" data-category="Idle">Idle</button>
-          <button type="button" class="filter-option" data-category="Platform">Platform</button>
-          <button type="button" class="filter-option" data-category="Puzzle">Puzzle</button>
-          <button type="button" class="filter-option" data-category="Runner">Runner</button>
-          <button type="button" class="filter-option" data-category="Sports">Sports</button>
-          <button type="button" class="filter-option" data-category="Strategy">Strategy</button>
+          <div id="filter-category-options"></div>
           <button type="button" class="filter-clear" id="filter-clear-all">Clear All</button>
         </div>
-        <div class="category-list" id="category-list" role="group" aria-label="Filter games by category" hidden></div>
       </div>
       <p class="results-summary" id="results-summary" aria-live="polite"></p>
       <div class="game-grid" id="game-grid" aria-live="polite" aria-busy="true"></div>

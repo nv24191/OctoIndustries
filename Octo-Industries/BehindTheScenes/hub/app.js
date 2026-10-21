@@ -1,12 +1,12 @@
 import { getRouteTitle, normalizeHubRoute } from './route-utils.js';
+import { gameCategories } from './catalog-utils.mjs';
 
 let games = Array.isArray(window.OCTO_GAMES) ? [...window.OCTO_GAMES] : [];
 let byId = new Map(games.map((game) => [game.id, game]));
 const grid = document.querySelector('#game-grid');
 const searchInput = document.querySelector('#game-search');
 const homeSearchInput = document.querySelector('#home-game-search');
-const categoryList = document.querySelector('#category-list');
-const topCategoryList = document.querySelector('#top-category-list');
+const filterCategoryOptions = document.querySelector('#filter-category-options');
 const resultSummary = document.querySelector('#results-summary');
 const emptyState = document.querySelector('#empty-state');
 const continueList = document.querySelector('#continue-list');
@@ -76,9 +76,13 @@ function updateFilterButtonLabel() {
 }
 
 function categories() {
-  if (categoryList) {
-    categoryList.innerHTML = '';
-    categoryList.hidden = true;
+  if (activeCategory !== 'All' && !gameCategories(games).includes(activeCategory)) activeCategory = 'All';
+  if (filterCategoryOptions) {
+    filterCategoryOptions.innerHTML = ['All', ...gameCategories(games)].map((category) => `
+      <button type="button" class="filter-option${activeCategory === category ? ' is-active' : ''}"
+        data-category="${escapeHtml(category)}" aria-pressed="${activeCategory === category}">
+        ${category === 'All' ? 'All Games' : escapeHtml(category)}
+      </button>`).join('');
   }
   updateFilterButtonLabel();
 }
@@ -633,19 +637,6 @@ function bindEvents() {
     }
   }, true);
 
-  const categoryButtons = [categoryList, topCategoryList].filter(Boolean);
-  categoryButtons.forEach((list) => {
-    list.addEventListener('click', (event) => {
-      const button = event.target.closest('[data-category]');
-      if (!button) return;
-      if (list === topCategoryList) setHubView('games', { pushState: true, focusHeading: true });
-      activeCategory = button.dataset.category;
-      currentPage = 1;
-      categories();
-      renderGames();
-    });
-  });
-
   const updateSearch = (event) => {
     searchInput.value = event.currentTarget.value;
     if (homeSearchInput) homeSearchInput.value = searchInput.value;
@@ -669,18 +660,17 @@ function bindEvents() {
     renderGames();
   });
 
-  document.querySelectorAll('.filter-option').forEach((button) => {
-    button.addEventListener('click', () => {
-      const panel = document.querySelector('#filter-panel');
-      activeCategory = button.dataset.category;
-      categories();
-      renderGames();
-      if (panel) panel.hidden = true;
-      const filterButton = document.querySelector('#filter-games');
-      if (filterButton) {
-        filterButton.setAttribute('aria-expanded', 'false');
-      }
-    });
+  filterCategoryOptions?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-category]');
+    if (!button) return;
+    const panel = document.querySelector('#filter-panel');
+    activeCategory = button.dataset.category;
+    currentPage = 1;
+    categories();
+    renderGames();
+    if (panel) panel.hidden = true;
+    const filterButton = document.querySelector('#filter-games');
+    filterButton?.setAttribute('aria-expanded', 'false');
   });
 
   document.querySelector('#filter-games')?.addEventListener('click', () => {

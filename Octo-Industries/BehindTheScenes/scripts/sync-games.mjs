@@ -174,7 +174,7 @@ function versionedAssetReference(file) {
   return `/${file}?v=${version}`;
 }
 
-walk(root);
+walk(gameCollection);
 
 const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
   const game = manifest
@@ -195,10 +195,8 @@ const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
     if (brandedHtml !== launchHtml) writeFileSync(launchFile, brandedHtml);
   }
 
-  const bannerPath = game.bannerSource || game.thumbnail
-    ? resolve(gameDirectory, 'hub-banner.svg')
-    : null;
-  if (bannerPath) writeFileSync(bannerPath, bannerSvg(game, gameDirectory));
+  const bannerPath = resolve(gameDirectory, 'hub-banner.svg');
+  writeFileSync(bannerPath, bannerSvg(game, gameDirectory));
   const {
     bannerSource,
     bannerFit,
@@ -207,9 +205,7 @@ const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
     ...metadata
   } = game;
   const directThumbnail = thumbnailDirect ? resolveGameFile(gameDirectory, game.thumbnail || '') : '';
-  const banner = bannerPath
-    ? versionedAssetReference(relative(root, bannerPath).split(sep).map(encodeURIComponent).join('/'))
-    : '';
+  const banner = versionedAssetReference(relative(root, bannerPath).split(sep).map(encodeURIComponent).join('/'));
   if (thumbnailDirect && !directThumbnail) {
     throw new Error(`Direct thumbnail does not exist for ${game.title}: ${game.thumbnail}`);
   }
@@ -224,9 +220,7 @@ const games = gamesToRegister.map(({ gameDirectory, manifest }) => {
     launch: `/${launch}`,
     thumbnail: directThumbnail
       ? versionedAssetReference(directThumbnail)
-      : bannerPath
-        ? versionedAssetReference(relative(root, bannerPath).split(sep).map(encodeURIComponent).join('/'))
-        : '',
+      : banner,
     screenshots: screenshotReferences(gameDirectory, configuredScreenshots),
     tags: Array.isArray(game.tags) ? game.tags : [],
     featured: game.featured === true,
@@ -237,6 +231,14 @@ if (!games.length) throw new Error(`No games found beneath ${gameCollection}`);
 const gameIds = new Set();
 for (const game of games) {
   if (gameIds.has(game.id)) throw new Error(`Duplicate game id: ${game.id}`);
+  for (const field of ['id', 'title', 'description', 'category', 'launch', 'thumbnail', 'banner', 'sourceFile']) {
+    if (typeof game[field] !== 'string' || !game[field].trim()) {
+      throw new Error(`Registration failed for ${game.title || game.id || 'unknown game'}: ${field} is missing.`);
+    }
+  }
+  if (!Number.isFinite(Date.parse(game.addedAt)) || !Array.isArray(game.tags) || !Array.isArray(game.screenshots)) {
+    throw new Error(`Registration failed for ${game.title}: metadata is incomplete.`);
+  }
   gameIds.add(game.id);
 }
 
