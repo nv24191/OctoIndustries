@@ -17,6 +17,11 @@ import {
 const cookieName = 'octo_admin_session';
 const sessionMs = 8 * 60 * 60 * 1000;
 const allowedFields = new Set(['title', 'description', 'category', 'tags', 'featured']);
+const authenticatedAdminRequests = new WeakSet();
+
+export function isAuthenticatedAdminRequest(request) {
+  return authenticatedAdminRequests.has(request);
+}
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -488,6 +493,7 @@ export async function handleAdmin(request, env) {
 
   const authorization = await requireSession(request, env, url);
   if (authorization.response) return authorization.response;
+  authenticatedAdminRequests.add(request);
   const { session } = authorization;
   if (path === '/api/admin/session' && request.method === 'GET') {
     return json({ authenticated: true, csrfToken: session.csrfToken, expiresAt: new Date(session.expiresAt).toISOString() });

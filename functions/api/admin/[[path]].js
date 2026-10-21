@@ -1,4 +1,4 @@
-import { handleAdmin } from '../../_lib/admin.js';
+import { handleAdmin, isAuthenticatedAdminRequest } from '../../_lib/admin.js';
 
 export async function onRequest(context) {
   const requestId = crypto.randomUUID();
@@ -27,6 +27,7 @@ export async function onRequest(context) {
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   } catch (error) {
     const status = error.status || (error instanceof URIError ? 400 : 500);
+    const details = isAuthenticatedAdminRequest(request) ? error.message : undefined;
     console.error(JSON.stringify({
       requestId,
       timestamp: new Date().toISOString(),
@@ -37,6 +38,7 @@ export async function onRequest(context) {
     }));
     return new Response(JSON.stringify({
       error: status < 500 ? error.message : 'The admin service could not complete this request.',
+      ...(details ? { details } : {}),
       requestId,
     }), {
       status,

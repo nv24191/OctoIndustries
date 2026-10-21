@@ -4,6 +4,19 @@ export const feedbackStatuses = [
 export const feedbackPriorities = ['low', 'medium', 'high', 'critical'];
 const schemaInitialization = new WeakMap();
 
+export const feedbackRequiredTables = [
+  'feedback_submissions',
+  'feedback_rate_limits',
+  'feedback_ticket_sequence',
+  'feedback_conversations',
+  'feedback_activity',
+];
+
+const feedbackRequiredColumns = [
+  'id', 'ticket_number', 'access_token_hash', 'type', 'game_id', 'message', 'device_info',
+  'status', 'priority', 'admin_notes', 'archived_at', 'deleted_at', 'created_at', 'updated_at',
+];
+
 export const feedbackSchemaStatements = [
   `CREATE TABLE IF NOT EXISTS feedback_submissions (
     id TEXT PRIMARY KEY,
@@ -133,33 +146,31 @@ async function feedbackColumns(database) {
   return result.results || [];
 }
 
-function isLegacyFeedbackSchema(columns) {
-  return columns.length > 0 && !columns.some((column) => column.name === 'ticket_number');
+export function assertFeedbackSchema(columns, tables) {
+  const columnNames = new Set(columns.map((column) => column.name));
+  const tableNames = new Set(tables);
+  const missingColumns = feedbackRequiredColumns.filter((name) => !columnNames.has(name));
+  const missingTables = feedbackRequiredTables.filter((name) => !tableNames.has(name));
+  if (missingColumns.length || missingTables.length) {
+    const missing = [
+      missingTables.length && `tables: ${missingTables.join(', ')}`,
+      missingColumns.length && `columns: ${missingColumns.join(', ')}`,
+    ].filter(Boolean).join('; ');
+    throw Object.assign(new Error(
+      `Ticket database schema is incomplete (${missing}). Apply migrations/0003_ticketing.sql only after a verified database export.`,
+    ), { status: 503, code: 'FEEDBACK_SCHEMA_NOT_READY' });
+  }
 }
 
 export async function ensureFeedbackSchema(database) {
   let initialization = schemaInitialization.get(database);
   if (!initialization) {
     initialization = (async () => {
-      let columns = await feedbackColumns(database);
-      if (isLegacyFeedbackSchema(columns)) {
-        if (typeof database.batch !== 'function') {
-          throw new Error('The admin database cannot safely upgrade the legacy feedback schema.');
-        }
-        try {
-          const results = await database.batch(legacyFeedbackMigrationStatements.map((sql) => database.prepare(sql)));
-          if (results.some((result) => result?.success === false)) {
-            throw new Error('Could not upgrade the legacy feedback schema.');
-          }
-        } catch (error) {
-          columns = await feedbackColumns(database);
-          if (columns.length === 0 || isLegacyFeedbackSchema(columns)) throw error;
-        }
-      }
-      for (const sql of feedbackSchemaStatements) {
-        const result = await database.prepare(sql).run();
-        if (result?.success === false) throw new Error('Could not initialize feedback storage.');
-      }
+      const columns = await feedbackColumns(database);
+      const result = await database.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('feedback_submissions', 'feedback_rate_limits', 'feedback_ticket_sequence', 'feedback_conversations', 'feedback_activity')",
+      ).all();
+      assertFeedbackSchema(columns, (result.results || []).map((table) => table.name));
     })();
     schemaInitialization.set(database, initialization);
   }

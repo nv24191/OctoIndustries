@@ -16,8 +16,8 @@ import {
   validateProposalTitle,
 } from './change-proposals.mjs';
 import {
-  feedbackSchemaStatements,
-  legacyFeedbackMigrationStatements,
+  assertFeedbackSchema,
+  feedbackRequiredTables,
   normalizeFeedback,
   validateAdminNotes,
   validateConversationMessage,
@@ -50,6 +50,11 @@ const cloudflareAccountId = process.env.CF_ACCOUNT_ID || '';
 const cloudflareDatabaseId = process.env.CF_D1_DATABASE_ID || '';
 const cloudflareApiToken = process.env.CF_D1_API_TOKEN || '';
 const remoteD1Configured = Boolean(cloudflareAccountId || cloudflareDatabaseId || cloudflareApiToken);
+const remoteD1Configuration = new Map([
+  ['CF_ACCOUNT_ID', cloudflareAccountId],
+  ['CF_D1_DATABASE_ID', cloudflareDatabaseId],
+  ['CF_D1_API_TOKEN', cloudflareApiToken],
+]);
 const githubToken = process.env.GITHUB_TOKEN || '';
 const githubRepository = process.env.GITHUB_REPOSITORY || 'nv24191/Personal';
 const adminAssetPaths = new Set(['/admin', '/admin/', '/admin/admin.css', '/admin/admin.js']);
@@ -139,6 +144,14 @@ async function saveState() {
 }
 
 async function d1Query(sql, params = []) {
+  const missingConfiguration = [...remoteD1Configuration]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  if (missingConfiguration.length) {
+    throw Object.assign(new Error(`Cloudflare D1 configuration is incomplete; missing ${missingConfiguration.join(', ')}.`), {
+      status: 503,
+    });
+  }
   const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/d1/database/${encodeURIComponent(cloudflareDatabaseId)}/query`;
   let response;
   try {
@@ -181,14 +194,21 @@ async function d1Query(sql, params = []) {
         message: typeof failure?.message === 'string' ? failure.message.slice(0, 300) : 'A D1 batch statement failed.',
       });
     }
+    const cfRay = response.headers.get('cf-ray') || null;
     console.error('Cloudflare D1 query failed:', {
       timestamp: new Date().toISOString(),
       endpoint: 'Cloudflare D1 /query',
       status: response.status,
-      requestId: response.headers.get('cf-ray') || null,
+      requestId: cfRay,
       reason: providerErrors,
     });
-    throw new Error('Cloudflare D1 rejected an admin database request. Check the D1 API token permissions and database setup.');
+    const providerMessage = providerErrors
+      .map(({ code, message }) => `${code ? `Cloudflare error ${code}: ` : ''}${message}`)
+      .join(' ')
+      .slice(0, 500);
+    throw new Error(
+      `Cloudflare D1 rejected the request (HTTP ${response.status}${cfRay ? `, cf-ray ${cfRay}` : ''})${providerMessage ? `: ${providerMessage}` : '.'}`,
+    );
   }
   return queryResult || { success: true, results: [] };
 }
@@ -197,16 +217,12 @@ async function ensureFeedbackSchema() {
   if (!remoteD1Configured) return;
   if (!feedbackSchemaInitialization) {
     feedbackSchemaInitialization = (async () => {
-      let columns = (await d1Query('PRAGMA table_info(feedback_submissions)')).results || [];
-      if (columns.length && !columns.some((column) => column.name === 'ticket_number')) {
-        try {
-          await d1Query(legacyFeedbackMigrationStatements.join(';\n'));
-        } catch (error) {
-          columns = (await d1Query('PRAGMA table_info(feedback_submissions)')).results || [];
-          if (!columns.length || !columns.some((column) => column.name === 'ticket_number')) throw error;
-        }
-      }
-      for (const sql of feedbackSchemaStatements) await d1Query(sql);
+      const columns = (await d1Query('PRAGMA table_info(feedback_submissions)')).results || [];
+      const tables = (await d1Query(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${feedbackRequiredTables.map(() => '?').join(', ')})`,
+        feedbackRequiredTables,
+      )).results || [];
+      assertFeedbackSchema(columns, tables.map((table) => table.name));
     })();
   }
   try {
@@ -1804,7 +1820,10 @@ if (!passwordHash) {
   process.exit(1);
 }
 if (remoteD1Configured && !(cloudflareAccountId && cloudflareDatabaseId && cloudflareApiToken)) {
-  console.error('CF_ACCOUNT_ID, CF_D1_DATABASE_ID, and CF_D1_API_TOKEN must all be configured to use persistent Cloudflare D1 storage.');
+  const missingConfiguration = [...remoteD1Configuration]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  console.error(`Persistent Cloudflare D1 storage is misconfigured; missing ${missingConfiguration.join(', ')}.`);
   process.exit(1);
 }
 if (process.env.NODE_ENV === 'production' && !remoteD1Configured) {

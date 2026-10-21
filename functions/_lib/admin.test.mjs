@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { pbkdf2Sync, randomBytes, webcrypto } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { handleAdmin, handleCatalog, handleFeedback, handleRoadmap, handleTickets } from './admin.js';
-import { ensureFeedbackSchema, legacyFeedbackMigrationStatements } from './feedback.js';
+import { ensureFeedbackSchema } from './feedback.js';
+import { onRequest as serveAdminApi } from '../api/admin/[[path]].js';
 import { onRequest as serveCompressedAsset } from '../Octo-Industries/Red-Ball-4/Build/[[path]].js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -28,6 +29,7 @@ class MemoryDatabase {
     this.schemaInitializationCalls = 0;
     this.legacyFeedbackSchema = false;
     this.feedbackMigrationStatements = [];
+    this.failFeedbackRead = false;
   }
 
   prepare(sql) {
@@ -100,6 +102,15 @@ class MemoryStatement {
   }
 
   async all() {
+    if (this.sql.includes("FROM sqlite_master WHERE type = 'table'")) {
+      return { results: [
+        'feedback_submissions',
+        'feedback_rate_limits',
+        'feedback_ticket_sequence',
+        'feedback_conversations',
+        'feedback_activity',
+      ].map((name) => ({ name })) };
+    }
     if (this.sql === 'PRAGMA table_info(feedback_submissions)') {
       const names = this.database.legacyFeedbackSchema
         ? ['id', 'type', 'game_id', 'message', 'device_info', 'status', 'admin_notes', 'created_at', 'updated_at']
@@ -111,6 +122,7 @@ class MemoryStatement {
         && !this.database.feedback.get(id).deleted_at).map((id) => ({ id })) };
     }
     if (this.sql.startsWith('SELECT * FROM feedback_submissions')) {
+      if (this.database.failFeedbackRead) throw new Error('Simulated Cloudflare D1 provider diagnostic.');
       const results = [...this.database.feedback.values()];
       return { results: this.sql.includes('deleted_at IS NULL') ? results.filter((entry) => !entry.deleted_at) : results };
     }
@@ -281,7 +293,7 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
     headers: { 'X-Ticket-Access-Token': '0'.repeat(64) },
   }), env);
   assert.equal(invalidTicketAccess.status, 404);
-  assert.equal(env.ADMIN_DB.schemaInitializationCalls, 10);
+  assert.equal(env.ADMIN_DB.schemaInitializationCalls, 0);
   const crossOriginSubmission = await handleFeedback(new Request(`${baseUrl}/api/feedback`, {
     method: 'POST',
     headers: { Origin: 'https://other.example', 'Content-Type': 'application/json' },
@@ -317,6 +329,14 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
   assert.equal(login.status, 200);
   const { csrfToken } = await login.json();
   const cookie = login.headers.get('set-cookie').split(';', 1)[0];
+  env.ADMIN_DB.failFeedbackRead = true;
+  const failedAdminRequest = new Request(`${baseUrl}/api/admin/feedback`, { headers: { Cookie: cookie } });
+  const failedAdminResponse = await serveAdminApi({ request: failedAdminRequest, env });
+  const failedAdminBody = await failedAdminResponse.json();
+  assert.equal(failedAdminResponse.status, 500);
+  assert.equal(failedAdminBody.details, 'Simulated Cloudflare D1 provider diagnostic.');
+  assert.equal(failedAdminBody.requestId, failedAdminResponse.headers.get('X-Request-Id'));
+  env.ADMIN_DB.failFeedbackRead = false;
   const prepare = env.ADMIN_DB.prepare.bind(env.ADMIN_DB);
   env.ADMIN_DB.prepare = (sql) => {
     if (sql.startsWith('SELECT COUNT(*) AS count FROM feedback_submissions')) {
@@ -398,7 +418,7 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
   assert.equal(issueSubmission.status, 201);
   const inbox = await handleAdmin(new Request(`${baseUrl}/api/admin/feedback`, { headers: { Cookie: cookie } }), env);
   assert.equal(inbox.status, 200);
-  assert.equal(env.ADMIN_DB.schemaInitializationCalls, 10);
+  assert.equal(env.ADMIN_DB.schemaInitializationCalls, 0);
   const submissions = await inbox.json();
   assert.equal(submissions.length, 2);
   assert.equal(submissions.find((entry) => entry.type === 'issue').status, 'new');
@@ -509,18 +529,18 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
   assert.equal((await handleAdmin(dashboardRequest, env)).status, 401);
 });
 
-test('legacy inquiry schema is upgraded in a D1 batch before ticketing queries run', async () => {
+test('legacy inquiry schema is diagnosed without running an automatic migration', async () => {
   const database = new MemoryDatabase();
   database.legacyFeedbackSchema = true;
 
-  await ensureFeedbackSchema(database);
+  await assert.rejects(ensureFeedbackSchema(database), {
+    code: 'FEEDBACK_SCHEMA_NOT_READY',
+    status: 503,
+  });
 
-  assert.equal(database.legacyFeedbackSchema, false);
-  assert.deepEqual(database.feedbackMigrationStatements, legacyFeedbackMigrationStatements);
-  assert.ok(database.feedbackMigrationStatements.some((sql) => sql.includes('FROM feedback_submissions')));
-  assert.ok(database.feedbackMigrationStatements.some((sql) => sql.includes('admin_notes')));
-  assert.ok(database.feedbackMigrationStatements.some((sql) => sql.includes('feedback_conversations')));
-  assert.equal(database.schemaInitializationCalls, 10);
+  assert.equal(database.legacyFeedbackSchema, true);
+  assert.deepEqual(database.feedbackMigrationStatements, []);
+  assert.equal(database.schemaInitializationCalls, 0);
 });
 
 test('Cloudflare large-asset route returns a correctly encoded gzip representation', async () => {
