@@ -28,11 +28,19 @@ class MemoryDatabase {
     this.nextTicketNumber = 1001;
     this.schemaInitializationCalls = 0;
     this.legacyFeedbackSchema = false;
+    this.feedbackTables = [
+      'feedback_submissions',
+      'feedback_rate_limits',
+      'feedback_ticket_sequence',
+      'feedback_conversations',
+      'feedback_activity',
+    ];
     this.feedbackMigrationStatements = [];
     this.failFeedbackRead = false;
   }
 
   prepare(sql) {
+    if (/^\s*(?:CREATE|ALTER|DROP)\b/i.test(sql)) this.schemaInitializationCalls += 1;
     return new MemoryStatement(this, sql);
   }
 
@@ -103,13 +111,7 @@ class MemoryStatement {
 
   async all() {
     if (this.sql.includes("FROM sqlite_master WHERE type = 'table'")) {
-      return { results: [
-        'feedback_submissions',
-        'feedback_rate_limits',
-        'feedback_ticket_sequence',
-        'feedback_conversations',
-        'feedback_activity',
-      ].map((name) => ({ name })) };
+      return { results: this.database.feedbackTables.map((name) => ({ name })) };
     }
     if (this.sql === 'PRAGMA table_info(feedback_submissions)') {
       const names = this.database.legacyFeedbackSchema
@@ -529,16 +531,30 @@ test('Cloudflare admin login, CSRF protection, catalog edits, and logout', async
   assert.equal((await handleAdmin(dashboardRequest, env)).status, 401);
 });
 
-test('legacy inquiry schema is diagnosed without running an automatic migration', async () => {
+test('partial legacy schema with an existing ticket sequence is diagnosed without schema writes', async () => {
   const database = new MemoryDatabase();
   database.legacyFeedbackSchema = true;
+  database.feedbackTables = [
+    'feedback_submissions',
+    'feedback_rate_limits',
+    'feedback_ticket_sequence',
+  ];
 
+  await assert.rejects(ensureFeedbackSchema(database), {
+    code: 'FEEDBACK_SCHEMA_NOT_READY',
+    status: 503,
+  });
   await assert.rejects(ensureFeedbackSchema(database), {
     code: 'FEEDBACK_SCHEMA_NOT_READY',
     status: 503,
   });
 
   assert.equal(database.legacyFeedbackSchema, true);
+  assert.deepEqual(database.feedbackTables, [
+    'feedback_submissions',
+    'feedback_rate_limits',
+    'feedback_ticket_sequence',
+  ]);
   assert.deepEqual(database.feedbackMigrationStatements, []);
   assert.equal(database.schemaInitializationCalls, 0);
 });

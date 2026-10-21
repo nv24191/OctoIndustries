@@ -48,11 +48,12 @@ The exact provider-side root cause is **not yet confirmed**. The leading configu
 
 ## Status
 
+- Latest user-reported state (2026-10-21): the schema guard returns HTTP 503 and reports missing ticketing tables/columns. This production state was not independently queried from this workspace; see [`inquiries-production-schema-upgrade.md`](./inquiries-production-schema-upgrade.md) for the gated recovery plan.
 - Root cause found: **pending provider error details**.
 - Files modified: `Octo-Industries/BehindTheScenes/admin/server.mjs`.
 - SQL queries/migrations applied: none.
 - Records recovered: 0; records missing: unknown.
 - Database status: unverified remotely; configured D1 identity is consistent across local deployment files.
 - API status: reported HTTP 500; local error diagnostics improved.
-- Inbox status: unavailable until provider error is corrected and any required migration is verified/applied.
+- Inbox status: user reports ticket schema validation failure; production API recovery is not independently verified.
 - Validation: `npm --prefix Octo-Industries/BehindTheScenes test` passed (13 tests); Worker admin/feedback/roadmap tests passed (11 tests).
